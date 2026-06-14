@@ -51,10 +51,14 @@ class FakeSchemaService:
     def __init__(self, matches: list[dict]) -> None:
         self.table_catalog_repository = FakeCatalogRepository(matches)
 
-    def build_schema_text_for_catalog_entries(self, entries: list[dict]) -> str:
+    def build_schema_text_for_catalog_entries(
+        self,
+        entries: list[dict],
+        question: str | None = None,
+    ) -> str:
         return f"schema-size:{len(entries)}"
 
-    def build_all_files_schema_text(self) -> str:
+    def build_all_files_schema_text(self, question: str | None = None) -> str:
         return "schema-size:all"
 
 

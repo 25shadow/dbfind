@@ -1,4 +1,7 @@
+import json
+import math
 from pathlib import Path
+import re
 
 from app.repositories.collection_repository import CollectionRepository
 from app.repositories.column_repository import ColumnRepository
@@ -42,14 +45,20 @@ class SchemaService:
             )
         self.table_catalog_repository.replace_for_file(file_id, catalog_entries)
 
-    def build_schema_text(self, file_id: str) -> str:
+    def build_schema_text(self, file_id: str, question: str | None = None) -> str:
         parts: list[str] = []
         for sheet in self.sheet_repository.list_sheets(file_id):
             data_file = self.file_repository.get_file(file_id)
-            parts.append(self._build_table_schema_text(sheet, data_file=data_file))
+            parts.append(
+                self._build_table_schema_text(
+                    sheet,
+                    data_file=data_file,
+                    question=question,
+                )
+            )
         return "\n\n".join(parts)
 
-    def build_all_files_schema_text(self) -> str:
+    def build_all_files_schema_text(self, question: str | None = None) -> str:
         parts: list[str] = []
         for file_index, data_file in enumerate(self._ready_files(), start=1):
             for sheet in self.sheet_repository.list_sheets(data_file["id"]):
@@ -59,6 +68,7 @@ class SchemaService:
                         sheet,
                         table_name=table_alias,
                         data_file=data_file,
+                        question=question,
                     )
                 )
         return "\n\n".join(parts)
@@ -77,11 +87,16 @@ class SchemaService:
                     sheet,
                     table_name=catalog["table_alias"],
                     data_file=data_file,
+                    question=question,
                 )
             )
         return "\n\n".join(parts)
 
-    def build_schema_text_for_catalog_entries(self, entries: list[dict]) -> str:
+    def build_schema_text_for_catalog_entries(
+        self,
+        entries: list[dict],
+        question: str | None = None,
+    ) -> str:
         parts: list[str] = []
         for catalog in entries:
             data_file = self.file_repository.get_file(catalog["file_id"])
@@ -91,6 +106,7 @@ class SchemaService:
                     sheet,
                     table_name=catalog["table_alias"],
                     data_file=data_file,
+                    question=question,
                 )
             )
         return "\n\n".join(parts)
@@ -136,9 +152,11 @@ class SchemaService:
         sheet: dict,
         table_name: str | None = None,
         data_file: dict | None = None,
+        question: str | None = None,
     ) -> str:
         columns = self.column_repository.list_columns(sheet["id"])
         collection = self._collection_context_for_file(data_file) if data_file else None
+        row_examples = self._row_examples_for_sheet(sheet, data_file, question)
         lines = [
             *(
                 [f'-- collection: "{self._escape_comment(str(collection["name"]))}"']
@@ -181,6 +199,16 @@ class SchemaService:
             *( [f'-- subtitle: "{self._escape_comment(str(sheet["subtitle"]))}"'] if sheet.get("subtitle") else [] ),
             *( [f'-- unit: "{self._escape_comment(str(sheet["unit"]))}"'] if sheet.get("unit") else [] ),
             f'-- rows: {sheet["row_count"]}, columns: {sheet["column_count"]}',
+            *(
+                [
+                    "-- row_examples: "
+                    + self._escape_comment(
+                        json.dumps(row_examples, ensure_ascii=False, separators=(",", ":"))
+                    )
+                ]
+                if row_examples
+                else []
+            ),
             f'CREATE TABLE "{self._escape_identifier(str(table_name or sheet["table_name"]))}" (',
         ]
 
@@ -210,6 +238,102 @@ class SchemaService:
                 text = text[:37] + "..."
             samples.append(text)
         return ", ".join(samples)
+
+    def _row_examples_for_sheet(
+        self,
+        sheet: dict,
+        data_file: dict | None,
+        question: str | None,
+        *,
+        max_rows: int = 8,
+    ) -> list[dict]:
+        if not data_file:
+            return []
+
+        try:
+            rows = self.duckdb_service.preview_table(
+                self.duckdb_service.database_path_for_file(data_file["id"]),
+                sheet["table_name"],
+                limit=80,
+            )
+        except Exception:
+            return []
+
+        if not rows:
+            return []
+
+        ranked_rows = self._rank_row_examples(rows, question)
+        return [self._compact_row_example(row) for row in ranked_rows[:max_rows]]
+
+    def _rank_row_examples(self, rows: list[dict], question: str | None) -> list[dict]:
+        if not question:
+            return rows
+
+        terms = self._row_match_terms(question)
+        if not terms:
+            return rows
+
+        scored = []
+        for index, row in enumerate(rows):
+            row_text = self._row_text_for_matching(row)
+            score = sum(1 for term in terms if term in row_text)
+            scored.append((score, index, row))
+
+        matched = [item for item in scored if item[0] > 0]
+        if not matched:
+            return rows
+
+        matched.sort(key=lambda item: (-item[0], item[1]))
+        selected = matched[:8]
+        seen = {item[1] for item in selected}
+        for item in scored:
+            if item[1] in seen:
+                continue
+            selected.append(item)
+            seen.add(item[1])
+            if len(selected) >= 8:
+                break
+        return [item[2] for item in selected]
+
+    def _row_match_terms(self, question: str) -> list[str]:
+        compact = re.sub(r"\s+", "", question)
+        terms = set(re.findall(r"\d{4}", compact))
+        chinese_parts = re.findall(r"[\u4e00-\u9fff]{2,}", compact)
+        for part in chinese_parts:
+            for size in range(2, min(8, len(part)) + 1):
+                for index in range(0, len(part) - size + 1):
+                    terms.add(part[index : index + size])
+        return sorted(terms, key=len, reverse=True)[:64]
+
+    def _row_text_for_matching(self, row: dict) -> str:
+        values = []
+        for value in row.values():
+            if value is None:
+                continue
+            if isinstance(value, float) and math.isnan(value):
+                continue
+            if isinstance(value, (int, float)):
+                continue
+            text = re.sub(r"\s+", "", str(value))
+            if text:
+                values.append(text)
+        return " ".join(values)
+
+    def _compact_row_example(self, row: dict) -> dict:
+        compact = {}
+        for key, value in row.items():
+            clean_value = self._json_safe_value(value)
+            if isinstance(clean_value, str) and len(clean_value) > 80:
+                clean_value = clean_value[:77] + "..."
+            compact[str(key)] = clean_value
+        return compact
+
+    def _json_safe_value(self, value):
+        if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+            return None
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return value
+        return str(value)
 
     def _escape_identifier(self, value: str) -> str:
         return value.replace('"', '""')

@@ -35,7 +35,10 @@ class QueryService:
         else:
             if not payload.file_id:
                 raise ValueError("请选择一个已导入的文件")
-            schema_text = self.schema_service.build_schema_text(payload.file_id)
+            schema_text = self.schema_service.build_schema_text(
+                payload.file_id,
+                question=payload.question,
+            )
 
         generated = self.ai_adapter.generate_sql(payload.question, schema_text)
         sql = generated.sql
@@ -154,7 +157,11 @@ class QueryService:
             payload.question,
             limit=80,
         )
-        attempts = self._all_files_schema_attempts(catalog_matches, all_table_mappings)
+        attempts = self._all_files_schema_attempts(
+            catalog_matches,
+            all_table_mappings,
+            question=payload.question,
+        )
         last_error = None
 
         for schema_text, attempt_mappings, repair_empty_result in attempts:
@@ -300,6 +307,7 @@ class QueryService:
         self,
         catalog_matches: list[dict],
         all_table_mappings: list[dict] | None = None,
+        question: str | None = None,
     ) -> list[tuple[str, list[dict], bool]]:
         attempts = []
         base_mappings = all_table_mappings or self._all_files_table_mappings()
@@ -309,14 +317,17 @@ class QueryService:
             selected = catalog_matches[:limit]
             if not selected:
                 continue
-            schema_text = self.schema_service.build_schema_text_for_catalog_entries(selected)
+            schema_text = self.schema_service.build_schema_text_for_catalog_entries(
+                selected,
+                question=question,
+            )
             mappings = self._catalog_execution_mappings(selected, mappings_by_sheet)
             if mappings:
                 attempts.append((schema_text, mappings, False))
 
         attempts.append(
             (
-                self.schema_service.build_all_files_schema_text(),
+                self.schema_service.build_all_files_schema_text(question=question),
                 list(mappings_by_alias.values()),
                 True,
             )

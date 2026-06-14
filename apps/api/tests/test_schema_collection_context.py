@@ -60,3 +60,92 @@ def test_schema_text_includes_collection_context(temp_workspace, reset_settings_
     assert '-- source_region: "广东省"' in schema_text
     assert "-- source_year: 2022" in schema_text
     assert '-- source_type: "农村统计年鉴"' in schema_text
+
+
+def test_schema_text_includes_question_relevant_row_examples(
+    temp_workspace,
+    reset_settings_cache,
+) -> None:
+    FileRepository().create_file(
+        file_id="file_1",
+        name="population.xls",
+        path="population.xls",
+        file_hash="abc",
+        status="ready",
+        created_at="2026-06-12T00:00:00+00:00",
+        collection_id=None,
+    )
+    SheetRepository().replace_sheets(
+        "file_1",
+        [
+            {
+                "id": "sheet_1",
+                "name": "2-2-0",
+                "table_name": "sheet_1",
+                "row_count": 48,
+                "column_count": 4,
+                "title": "主要指标",
+                "subtitle": None,
+                "unit": None,
+            }
+        ],
+    )
+    ColumnRepository().replace_columns(
+        "sheet_1",
+        [
+            {
+                "id": "column_1",
+                "name": "指标",
+                "normalized_name": "指标",
+                "type": "VARCHAR",
+                "alias": None,
+                "sample_values": ["人口与就业", "年末户籍总人口"],
+            },
+            {
+                "id": "column_2",
+                "name": "Item",
+                "normalized_name": "Item",
+                "type": "VARCHAR",
+                "alias": None,
+                "sample_values": ["Population and Employment", "Registered Population"],
+            },
+            {
+                "id": "column_3",
+                "name": "1978",
+                "normalized_name": "1978",
+                "type": "DOUBLE",
+                "alias": None,
+                "sample_values": [None, 5064.15],
+            },
+            {
+                "id": "column_4",
+                "name": "2024",
+                "normalized_name": "2024",
+                "type": "DOUBLE",
+                "alias": None,
+                "sample_values": [None, 12780.0],
+            },
+        ],
+    )
+
+    service = SchemaService()
+    service.duckdb_service.preview_table = lambda database_path, table_name, limit: [
+        {"指标": "人口与就业", "Item": "Population and Employment", "1978": None, "2024": None},
+        {
+            "指标": "年末户籍总人口",
+            "Item": "Registered Population at the Year-end",
+            "1978": 5064.15,
+            "2024": 12780.0,
+        },
+    ]
+
+    schema_text = service.build_schema_text(
+        "file_1",
+        question="广东省1978年年末户籍总人口多少，2024年比1978年多多少人",
+    )
+
+    assert "-- row_examples:" in schema_text
+    assert '"指标":"年末户籍总人口"' in schema_text
+    assert '"1978":5064.15' in schema_text
+    assert '"2024":12780.0' in schema_text
+    assert schema_text.index('"指标":"年末户籍总人口"') < schema_text.index('"指标":"人口与就业"')

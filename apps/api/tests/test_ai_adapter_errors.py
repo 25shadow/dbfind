@@ -35,6 +35,17 @@ def test_text2sql_prompt_requires_calculated_columns_for_comparison_tables() -> 
     assert "不要只在解释里" in prompt
 
 
+def test_text2sql_prompt_explains_row_examples_as_whole_rows() -> None:
+    prompt = AiAdapter()._build_text2sql_prompt(
+        "查询某个指标在1978年的值",
+        '-- row_examples: [{"指标":"甲指标","1978":1.0}]\nCREATE TABLE "table_1" ("指标" VARCHAR, "1978" DOUBLE);',
+    )
+
+    assert "row_examples" in prompt
+    assert "整行样例" in prompt
+    assert "对应关系" in prompt
+
+
 def test_http_429_error_message_mentions_rate_limit() -> None:
     response = httpx.Response(429, request=httpx.Request("POST", "https://example.test"))
     error = httpx.HTTPStatusError("rate limited", request=response.request, response=response)
