@@ -10,6 +10,7 @@ dependencies = [
   "openpyxl",
   "openai-agents>=0.17.5,<0.18",
   "pandas",
+  "Pillow",
   "pydantic",
   "pydantic-settings",
   "pyxlsb",
