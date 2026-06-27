@@ -108,6 +108,9 @@ class AgentTaskItem(BaseModel):
     output_id: str | None = Field(default=None, alias="outputId")
     download_url: str | None = Field(default=None, alias="downloadUrl")
     error: str | None = None
+    query_result: dict | None = Field(default=None, alias="queryResult")
+    preview_result: AgentOperationPreview | None = Field(default=None, alias="previewResult")
+    sources: list[dict] = Field(default_factory=list)
     logs: list[AgentTaskLog] = Field(default_factory=list)
     created_at: str = Field(alias="createdAt")
     updated_at: str = Field(alias="updatedAt")

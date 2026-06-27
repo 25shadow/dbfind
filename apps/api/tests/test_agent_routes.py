@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 from unittest.mock import AsyncMock, patch
 
-from app.schemas.agent import AgentExecuteResponse, AgentPlan, AgentPreview, AgentStep
+from app.schemas.agent import AgentExecuteResponse, AgentOperationPreview, AgentPlan, AgentPreview, AgentPreviewSheet, AgentStep
 
 from app.main import create_app
 
@@ -109,7 +109,7 @@ def test_agent_plan_route_persists_task_and_returns_task_id(temp_workspace):
 
     tasks = client.get("/api/agent/tasks").json()["tasks"]
     assert tasks[0]["id"] == body["taskId"]
-    assert tasks[0]["status"] == "needs_confirmation"
+    assert tasks[0]["status"] == "planned"
 
 
 def test_agent_plan_route_does_not_persist_readonly_query_plan(temp_workspace):
@@ -161,6 +161,21 @@ def test_agent_execute_route_updates_existing_task(temp_workspace):
 
     with patch("app.api.routes.agent.AgentExecutionService") as service_class:
         service = service_class.return_value
+        service.preview.return_value = AgentOperationPreview(
+            status="preview",
+            affectedRows=1,
+            affectedColumns=["地区", "来源"],
+            sheets=[
+                AgentPreviewSheet(
+                    sheetName="查询结果",
+                    columns=["地区", "来源"],
+                    rows=[{"地区": "武江区", "来源": "资料 / 文件.xlsx / Sheet1"}],
+                    rowCount=1,
+                )
+            ],
+            sources=[],
+        )
+        client.post(f"/api/agent/tasks/{task_id}/run-query")
         service.execute.return_value = AgentExecuteResponse(
             status="completed",
             outputId="agent.xlsx",
@@ -246,3 +261,99 @@ def test_agent_preview_route_marks_task_as_needs_revision_when_preview_fails(tem
     task = client.get(f"/api/agent/tasks/{task_id}").json()
     assert task["status"] == "needs_revision"
     assert task["error"] == "字段不存在: 金额"
+
+
+def test_agent_query_stage_persists_result_and_waits_for_confirmation(temp_workspace):
+    client = TestClient(create_app())
+    plan_payload = {
+        "intent": "excel_operation",
+        "scope": "all",
+        "summary": "生成工作簿",
+        "requiresConfirmation": True,
+        "riskLevel": "medium",
+        "steps": [
+            {"tool": "query", "purpose": "查询", "params": "{\"question\":\"查GDP\",\"scope\":\"all\"}"},
+            {"tool": "workbook_writer", "purpose": "写出", "params": ""},
+        ],
+        "preview": {"affectedRows": None, "affectedColumns": [], "sampleBeforeAfter": []},
+        "status": "draft",
+    }
+
+    with patch("app.api.routes.agent.AgentService") as service_class:
+        service_class.return_value.plan = AsyncMock(return_value=AgentPlan.model_validate(plan_payload))
+        plan_response = client.post(
+            "/api/agent/plan",
+            json={"instruction": "查GDP并生成表", "scope": "all"},
+        )
+    task_id = plan_response.json()["taskId"]
+
+    with patch("app.api.routes.agent.AgentExecutionService") as service_class:
+        service_class.return_value.preview.return_value = AgentOperationPreview(
+            status="preview",
+            affectedRows=2,
+            affectedColumns=["地区", "GDP", "来源"],
+            sheets=[
+                AgentPreviewSheet(
+                    sheetName="查询结果",
+                    columns=["地区", "GDP", "来源"],
+                    rows=[
+                        {"地区": "武江区", "GDP": 1, "来源": "资料 / 文件.xlsx / Sheet1"},
+                        {"地区": "仁化县", "GDP": 2, "来源": "资料 / 文件.xlsx / Sheet1"},
+                    ],
+                    rowCount=2,
+                )
+            ],
+            sources=[
+                {
+                    "collectionId": "collection-1",
+                    "collectionName": "资料",
+                    "fileId": "file-1",
+                    "fileName": "文件.xlsx",
+                    "sheetId": "sheet-1",
+                    "sheetName": "Sheet1",
+                }
+            ],
+        )
+        response = client.post(f"/api/agent/tasks/{task_id}/run-query")
+
+    assert response.status_code == 200
+    task = response.json()
+    assert task["status"] == "awaiting_confirmation"
+    assert task["queryResult"]["columns"] == ["地区", "GDP", "来源"]
+    assert task["queryResult"]["rows"][0]["地区"] == "武江区"
+    assert task["sources"][0]["fileId"] == "file-1"
+    assert task["outputId"] is None
+    assert [log["stage"] for log in task["logs"]] == ["plan", "query", "query", "preview"]
+
+
+def test_agent_execute_requires_completed_query_stage(temp_workspace):
+    client = TestClient(create_app())
+    plan_payload = {
+        "intent": "excel_operation",
+        "scope": "all",
+        "summary": "生成工作簿",
+        "requiresConfirmation": True,
+        "riskLevel": "medium",
+        "steps": [
+            {"tool": "query", "purpose": "查询", "params": "{\"question\":\"查GDP\",\"scope\":\"all\"}"},
+            {"tool": "workbook_writer", "purpose": "写出", "params": ""},
+        ],
+        "preview": {"affectedRows": None, "affectedColumns": [], "sampleBeforeAfter": []},
+        "status": "draft",
+    }
+
+    with patch("app.api.routes.agent.AgentService") as service_class:
+        service_class.return_value.plan = AsyncMock(return_value=AgentPlan.model_validate(plan_payload))
+        plan_response = client.post(
+            "/api/agent/plan",
+            json={"instruction": "查GDP并生成表", "scope": "all"},
+        )
+    task_id = plan_response.json()["taskId"]
+
+    response = client.post(
+        "/api/agent/execute",
+        json={"taskId": task_id, "fileId": None, "plan": plan_payload},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "请先完成查询并确认来源后再生成工作簿"

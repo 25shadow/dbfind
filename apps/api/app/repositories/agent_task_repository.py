@@ -35,6 +35,9 @@ class AgentTaskRepository:
                     output_id TEXT,
                     download_url TEXT,
                     error TEXT,
+                    query_result_json TEXT,
+                    preview_json TEXT,
+                    sources_json TEXT NOT NULL DEFAULT '[]',
                     logs_json TEXT NOT NULL DEFAULT '[]',
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
@@ -42,6 +45,9 @@ class AgentTaskRepository:
                 """
             )
             self._ensure_column(conn, "logs_json", "TEXT NOT NULL DEFAULT '[]'")
+            self._ensure_column(conn, "query_result_json", "TEXT")
+            self._ensure_column(conn, "preview_json", "TEXT")
+            self._ensure_column(conn, "sources_json", "TEXT NOT NULL DEFAULT '[]'")
 
     def create_task(
         self,
@@ -62,9 +68,10 @@ class AgentTaskRepository:
                 """
                 INSERT INTO agent_tasks (
                     id, instruction, scope, file_id, plan_json, status,
-                    output_id, download_url, error, logs_json, created_at, updated_at
+                    output_id, download_url, error, query_result_json, preview_json,
+                    sources_json, logs_json, created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, '[]', ?, ?, ?)
                 """,
                 (
                     task_id,
@@ -88,6 +95,9 @@ class AgentTaskRepository:
         output_id: str | None = None,
         download_url: str | None = None,
         error: str | None = None,
+        query_result: dict | None = None,
+        preview: object | None = None,
+        sources: list[dict] | None = None,
         updated_at: str | None = None,
         log: dict | None = None,
     ) -> dict:
@@ -102,6 +112,9 @@ class AgentTaskRepository:
                 UPDATE agent_tasks
                 SET status = ?, output_id = COALESCE(?, output_id),
                     download_url = COALESCE(?, download_url), error = ?,
+                    query_result_json = COALESCE(?, query_result_json),
+                    preview_json = COALESCE(?, preview_json),
+                    sources_json = COALESCE(?, sources_json),
                     logs_json = ?,
                     updated_at = ?
                 WHERE id = ?
@@ -111,6 +124,9 @@ class AgentTaskRepository:
                     output_id,
                     download_url,
                     error,
+                    self._dump_json_or_none(query_result),
+                    self._dump_json_or_none(preview),
+                    self._dump_json_or_none(sources),
                     json.dumps(logs, ensure_ascii=False),
                     timestamp,
                     task_id,
@@ -125,7 +141,8 @@ class AgentTaskRepository:
             rows = conn.execute(
                 """
                 SELECT id, instruction, scope, file_id, plan_json, status,
-                       output_id, download_url, error, logs_json, created_at, updated_at
+                       output_id, download_url, error, query_result_json, preview_json,
+                       sources_json, logs_json, created_at, updated_at
                 FROM agent_tasks
                 ORDER BY created_at DESC
                 """
@@ -143,7 +160,8 @@ class AgentTaskRepository:
             row = conn.execute(
                 """
                 SELECT id, instruction, scope, file_id, plan_json, status,
-                       output_id, download_url, error, logs_json, created_at, updated_at
+                       output_id, download_url, error, query_result_json, preview_json,
+                       sources_json, logs_json, created_at, updated_at
                 FROM agent_tasks
                 WHERE id = ?
                 """,
@@ -162,8 +180,36 @@ class AgentTaskRepository:
     def _decode_row(self, row: sqlite3.Row) -> dict:
         item = dict(row)
         item["plan"] = AgentPlan.model_validate(json.loads(item.pop("plan_json")))
+        item["query_result"] = self._decode_optional_json(item.pop("query_result_json", None))
+        item["preview"] = self._decode_optional_json(item.pop("preview_json", None))
+        item["sources"] = self._decode_json_list(item.pop("sources_json", "[]"))
         item["logs"] = self._decode_logs(item.pop("logs_json", "[]"))
         return item
+
+    def _dump_json_or_none(self, value: object | None) -> str | None:
+        if value is None:
+            return None
+        if hasattr(value, "model_dump"):
+            value = value.model_dump(by_alias=True)  # type: ignore[assignment]
+        return json.dumps(value, ensure_ascii=False)
+
+    def _decode_optional_json(self, value: str | None) -> dict | None:
+        if not value:
+            return None
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return None
+        return parsed if isinstance(parsed, dict) else None
+
+    def _decode_json_list(self, value: str) -> list[dict]:
+        try:
+            parsed = json.loads(value or "[]")
+        except json.JSONDecodeError:
+            return []
+        if not isinstance(parsed, list):
+            return []
+        return [item for item in parsed if isinstance(item, dict)]
 
     def _decode_logs(self, value: str) -> list[dict]:
         try:

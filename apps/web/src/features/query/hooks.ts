@@ -6,9 +6,11 @@ import {
   deleteAgentTask,
   deleteQuery,
   executeAgentPlan,
+  getAgentTask,
   listAgentTasks,
   listQueryHistory,
-  previewAgentPlan
+  previewAgentPlan,
+  runAgentQueryStage
 } from "./api";
 
 export function useCreateQuery() {
@@ -33,7 +35,10 @@ export function useExecuteAgentPlan() {
 
   return useMutation({
     mutationFn: executeAgentPlan,
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
+      if (variables.taskId) {
+        queryClient.invalidateQueries({ queryKey: ["agent-task", variables.taskId] });
+      }
       queryClient.invalidateQueries({ queryKey: ["agent-tasks"] });
     }
   });
@@ -46,6 +51,30 @@ export function usePreviewAgentPlan() {
     mutationFn: previewAgentPlan,
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["agent-tasks"] });
+    }
+  });
+}
+
+export function useRunAgentQueryStage() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: runAgentQueryStage,
+    onSuccess: (task) => {
+      queryClient.setQueryData(["agent-task", task.id], task);
+      queryClient.invalidateQueries({ queryKey: ["agent-tasks"] });
+    }
+  });
+}
+
+export function useAgentTask(taskId?: string) {
+  return useQuery({
+    queryKey: ["agent-task", taskId],
+    queryFn: () => getAgentTask(taskId || ""),
+    enabled: Boolean(taskId),
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return status === "planned" || status === "querying" || status === "executing" ? 1200 : false;
     }
   });
 }

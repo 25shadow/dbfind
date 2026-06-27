@@ -6,10 +6,12 @@ import {
   useCreateAgentPlan,
   useCreateQuery,
   useExecuteAgentPlan,
-  usePreviewAgentPlan
+  usePreviewAgentPlan,
+  useRunAgentQueryStage,
+  useAgentTask
 } from "../hooks";
 import { useFileSelection } from "../../files/store";
-import type { AgentOperationPreview, AgentPlan, AgentTaskLog } from "../types";
+import type { AgentOperationPreview, AgentPlan, AgentTaskItem, AgentTaskLog } from "../types";
 
 export function QueryPanel() {
   const [question, setQuestion] = useState("");
@@ -18,24 +20,36 @@ export function QueryPanel() {
   const agentPlanMutation = useCreateAgentPlan();
   const executeAgentMutation = useExecuteAgentPlan();
   const previewAgentMutation = usePreviewAgentPlan();
+  const runAgentQueryMutation = useRunAgentQueryStage();
   const queryMutation = useCreateQuery();
+  const currentTaskId = agentPlanMutation.data?.taskId || runAgentQueryMutation.data?.id || undefined;
+  const agentTaskQuery = useAgentTask(currentTaskId);
+  const currentTask = agentTaskQuery.data || runAgentQueryMutation.data;
   const isRunning =
     agentPlanMutation.isPending ||
     queryMutation.isPending ||
     executeAgentMutation.isPending ||
-    previewAgentMutation.isPending;
+    previewAgentMutation.isPending ||
+    runAgentQueryMutation.isPending ||
+    currentTask?.status === "querying" ||
+    currentTask?.status === "executing";
   const isQueryDisabled = isRunning || (scope === "selected" && !selectedFileId);
   const plan = agentPlanMutation.data?.plan;
-  const taskId = agentPlanMutation.data?.taskId || undefined;
+  const taskId = currentTaskId;
   const shouldShowQueryResult = Boolean(queryMutation.data) || !plan || plan.intent === "query";
-  const runLogs = buildCurrentRunLogs({
+  const runLogs = currentTask?.logs?.length ? currentTask.logs : buildCurrentRunLogs({
     isPlanning: agentPlanMutation.isPending,
     hasPlan: Boolean(plan),
     isQueryRunning: queryMutation.isPending,
     hasQueryResult: Boolean(queryMutation.data),
-    isPreviewing: previewAgentMutation.isPending,
-    hasPreview: Boolean(previewAgentMutation.data),
-    previewError: previewAgentMutation.error instanceof Error ? previewAgentMutation.error.message : undefined,
+    isPreviewing: previewAgentMutation.isPending || runAgentQueryMutation.isPending,
+    hasPreview: Boolean(previewAgentMutation.data || currentTask?.previewResult),
+    previewError:
+      runAgentQueryMutation.error instanceof Error
+        ? runAgentQueryMutation.error.message
+        : previewAgentMutation.error instanceof Error
+        ? previewAgentMutation.error.message
+        : currentTask?.error || undefined,
     isExecuting: executeAgentMutation.isPending,
     hasExecuteResult: Boolean(executeAgentMutation.data),
     executeError: executeAgentMutation.error instanceof Error ? executeAgentMutation.error.message : undefined
@@ -51,6 +65,7 @@ export function QueryPanel() {
     }
 
     previewAgentMutation.reset();
+    runAgentQueryMutation.reset();
     executeAgentMutation.reset();
 
     agentPlanMutation.mutate({
@@ -61,11 +76,9 @@ export function QueryPanel() {
       onSuccess: (data) => {
         if (data.plan.intent !== "query") {
           queryMutation.reset();
-          previewAgentMutation.mutate({
-            taskId: data.taskId || undefined,
-            fileId: scope === "selected" ? selectedFileId : undefined,
-            plan: data.plan
-          });
+          if (data.taskId) {
+            runAgentQueryMutation.mutate(data.taskId);
+          }
           return;
         }
 
@@ -138,13 +151,26 @@ export function QueryPanel() {
           taskId={taskId}
           selectedFileId={selectedFileId}
           preview={previewAgentMutation.data}
+          task={currentTask}
           previewError={
-            previewAgentMutation.error instanceof Error ? previewAgentMutation.error.message : undefined
+            runAgentQueryMutation.error instanceof Error
+              ? runAgentQueryMutation.error.message
+              : previewAgentMutation.error instanceof Error
+              ? previewAgentMutation.error.message
+              : currentTask?.error || undefined
           }
-          isPreviewing={previewAgentMutation.isPending}
+          isPreviewing={runAgentQueryMutation.isPending || currentTask?.status === "querying"}
           isQueryRunning={queryMutation.isPending}
-          isExecuting={executeAgentMutation.isPending}
-          executeResult={executeAgentMutation.data}
+          isExecuting={executeAgentMutation.isPending || currentTask?.status === "executing"}
+          executeResult={
+            executeAgentMutation.data ||
+            (currentTask?.downloadUrl && currentTask.outputId
+              ? {
+                  downloadUrl: currentTask.downloadUrl,
+                  fileName: `dbfind-agent-${currentTask.outputId}`
+                }
+              : undefined)
+          }
           logs={runLogs}
           onExecute={() => {
             executeAgentMutation.mutate(
@@ -173,6 +199,7 @@ function AgentPlanPreview({
   taskId,
   selectedFileId,
   preview,
+  task,
   previewError,
   isPreviewing,
   isQueryRunning,
@@ -185,6 +212,7 @@ function AgentPlanPreview({
   taskId?: string;
   selectedFileId: string | null | undefined;
   preview?: AgentOperationPreview;
+  task?: AgentTaskItem;
   previewError?: string;
   isPreviewing: boolean;
   isQueryRunning: boolean;
@@ -195,9 +223,11 @@ function AgentPlanPreview({
 }) {
   const isQuery = plan.intent === "query";
   const hasExecuted = Boolean(executeResult);
+  const effectivePreview = preview || task?.previewResult || undefined;
   const canExecute =
     plan.requiresConfirmation &&
-    Boolean(preview) &&
+    task?.status === "awaiting_confirmation" &&
+    Boolean(effectivePreview) &&
     !hasExecuted &&
     (plan.scope === "all" || (plan.scope === "selected" && Boolean(selectedFileId)));
   const actionLabel = hasExecuted
@@ -246,6 +276,7 @@ function AgentPlanPreview({
       {plan.requiresConfirmation && (
         <AgentOperationPreviewPanel
           preview={preview}
+          task={task}
           previewError={previewError}
           isPreviewing={isPreviewing}
         />
@@ -287,10 +318,12 @@ function AgentRunLogPanel({ logs }: { logs: AgentTaskLog[] }) {
 
 function AgentOperationPreviewPanel({
   preview,
+  task,
   previewError,
   isPreviewing
 }: {
   preview?: AgentOperationPreview;
+  task?: AgentTaskItem;
   previewError?: string;
   isPreviewing: boolean;
 }) {
@@ -298,7 +331,8 @@ function AgentOperationPreviewPanel({
     return <div className="agent-preview-panel">正在生成操作预览...</div>;
   }
 
-  if (!preview) {
+  const effectivePreview = preview || task?.previewResult || undefined;
+  if (!effectivePreview) {
     if (previewError) {
       return (
         <div className="agent-preview-panel is-error">
@@ -310,25 +344,25 @@ function AgentOperationPreviewPanel({
     return <div className="agent-preview-panel">预览生成后会显示将入库/写出的结果表。</div>;
   }
 
-  const firstSheet = preview.sheets[0];
+  const firstSheet = effectivePreview.sheets[0];
   const previewColumns = firstSheet?.columns.filter((column) => column !== "来源") || [];
   const designFlags = [
-    preview.design.asTable ? "Excel Table" : null,
-    preview.design.autofilter ? "筛选器" : null,
-    preview.design.freezeHeader ? "冻结首行" : null,
-    preview.design.charts?.length ? `${preview.design.charts.length} 个图表` : null,
-    preview.design.conditionalFormats?.length ? `${preview.design.conditionalFormats.length} 个条件格式` : null
+    effectivePreview.design.asTable ? "Excel Table" : null,
+    effectivePreview.design.autofilter ? "筛选器" : null,
+    effectivePreview.design.freezeHeader ? "冻结首行" : null,
+    effectivePreview.design.charts?.length ? `${effectivePreview.design.charts.length} 个图表` : null,
+    effectivePreview.design.conditionalFormats?.length ? `${effectivePreview.design.conditionalFormats.length} 个条件格式` : null
   ].filter(Boolean);
 
   return (
     <div className="agent-preview-panel">
       <div className="agent-preview-metrics">
-        <span>{preview.affectedRows} 行</span>
-        <span>{preview.affectedColumns.length} 列</span>
-        <span>{preview.sheets.length} 个 Sheet</span>
+        <span>{effectivePreview.affectedRows} 行</span>
+        <span>{effectivePreview.affectedColumns.filter((column) => column !== "来源").length} 列</span>
+        <span>{effectivePreview.sheets.length} 个 Sheet</span>
       </div>
       {designFlags.length > 0 && <p className="agent-preview-design">{designFlags.join(" / ")}</p>}
-      <SourceSummary sources={preview.sources || []} />
+      <SourceSummary sources={effectivePreview.sources || task?.sources || []} />
       {firstSheet && (
         <div className="agent-preview-table-wrap">
           <table className="agent-preview-table">

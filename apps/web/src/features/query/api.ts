@@ -6,6 +6,7 @@ import type {
   AgentPreviewRequest,
   AgentOperationPreview,
   AgentTaskListResult,
+  AgentTaskItem,
   AgentTaskResult,
   ExportRequest,
   ExportResult,
@@ -39,6 +40,16 @@ export function previewAgentPlan(payload: AgentPreviewRequest) {
     method: "POST",
     body: JSON.stringify(payload)
   });
+}
+
+export function runAgentQueryStage(taskId: string) {
+  return apiRequest<AgentTaskItem>(`/api/agent/tasks/${taskId}/run-query`, {
+    method: "POST"
+  });
+}
+
+export function getAgentTask(taskId: string) {
+  return apiRequest<AgentTaskItem>(`/api/agent/tasks/${taskId}`);
 }
 
 export function listAgentTasks() {

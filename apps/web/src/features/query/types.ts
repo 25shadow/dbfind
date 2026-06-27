@@ -81,6 +81,12 @@ export type AgentOperationPreview = {
   };
 };
 
+export type AgentQueryResult = {
+  columns: string[];
+  rows: Record<string, unknown>[];
+  rowCount: number;
+};
+
 export type AgentTaskItem = {
   id: string;
   instruction: string;
@@ -91,6 +97,9 @@ export type AgentTaskItem = {
   outputId?: string | null;
   downloadUrl?: string | null;
   error?: string | null;
+  queryResult?: AgentQueryResult | null;
+  previewResult?: AgentOperationPreview | null;
+  sources?: QuerySource[];
   logs?: AgentTaskLog[];
   createdAt: string;
   updatedAt: string;
