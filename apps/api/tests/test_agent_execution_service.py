@@ -261,6 +261,71 @@ def test_preview_selected_file_plan_returns_transformed_rows_and_design_summary(
     assert preview.design["numberFormats"] == {"金额": "0.0"}
 
 
+def test_query_generated_workbook_includes_source_context(temp_workspace):
+    class FakeQueryService:
+        def run(self, request, record_history=True):
+            return QueryResponse(
+                queryId="query-1",
+                fileId="",
+                scope=request.scope,
+                question=request.question,
+                sql="select ...",
+                columns=["地区", "产值_万元"],
+                rows=[
+                    {"地区": "武江区", "产值_万元": 29487.89},
+                    {"地区": "仁化县", "产值_万元": 103524.27},
+                ],
+                explanation="",
+                createdAt=datetime.now(UTC).isoformat(),
+                sources=[
+                    {
+                        "collectionName": "2024年统计资料",
+                        "fileName": "农业产值.xlsx",
+                        "sheetName": "Sheet1",
+                        "sheetTitle": "季度农业产值",
+                    },
+                    {
+                        "collectionName": "2026年资料",
+                        "fileName": "补充数据.xlsx",
+                        "sheetName": "Sheet2",
+                    },
+                ],
+            )
+
+    plan = AgentPlan(
+        intent="excel_operation",
+        scope="all",
+        summary="生成对比表",
+        requiresConfirmation=True,
+        riskLevel="medium",
+        steps=[
+            AgentStep(
+                tool="query",
+                purpose="查询数据",
+                params={"question": "生成对比表", "scope": "all", "sheetName": "对比表"},
+            ),
+            AgentStep(tool="workbook_writer", purpose="生成工作簿", params={"sheetName": "对比表"}),
+            AgentStep(tool="workbook_style", purpose="设计表格", params={"asTable": True}),
+        ],
+        preview=AgentPreview(),
+    )
+    service = AgentExecutionService()
+    service.query_service = FakeQueryService()
+
+    preview = service.preview(plan=plan, file_id=None)
+
+    assert preview.sheets[0].columns == ["地区", "产值_万元", "来源"]
+    assert preview.sheets[0].rows[0]["来源"] == "2024年统计资料 / 农业产值.xlsx / 季度农业产值"
+    assert preview.sheets[0].rows[1]["来源"] == "2026年资料 / 补充数据.xlsx / Sheet2"
+
+    result = service.execute(plan=plan, file_id=None)
+    workbook = load_workbook(temp_workspace / "generated" / result.output_id)
+    sheet = workbook["对比表"]
+    assert sheet["C1"].value == "来源"
+    assert sheet["C2"].value == "2024年统计资料 / 农业产值.xlsx / 季度农业产值"
+    assert sheet["C3"].value == "2026年资料 / 补充数据.xlsx / Sheet2"
+
+
 def test_execute_all_files_query_plan_writes_query_result_workbook(temp_workspace, monkeypatch):
     captured = {}
 

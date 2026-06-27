@@ -141,9 +141,49 @@ class AgentExecutionService:
                 record_history=False,
             )
             dataframe = pd.DataFrame(response.rows, columns=response.columns)
+            dataframe = self._append_source_context(dataframe, response.sources)
             sheet_name = params.get("sheetName") or params.get("sheet_name") or f"查询结果{index}"
             frames.append((self.workbook_engine.safe_sheet_name(str(sheet_name)), dataframe))
         return frames
+
+    def _append_source_context(self, dataframe: pd.DataFrame, sources: list[dict]) -> pd.DataFrame:
+        if dataframe.empty or not sources:
+            return dataframe
+
+        source_values = [self._format_source(source) for source in sources]
+        source_values = [value for value in source_values if value]
+        if not source_values:
+            return dataframe
+
+        result = dataframe.copy()
+        column_name = self._unique_column_name(result, "来源")
+        if len(source_values) == len(result.index):
+            result[column_name] = source_values
+        elif len(source_values) == 1:
+            result[column_name] = source_values[0]
+        else:
+            result[column_name] = "；".join(dict.fromkeys(source_values))
+        return result
+
+    def _format_source(self, source: dict) -> str:
+        collection_name = source.get("collectionName") or source.get("collection_name")
+        file_name = source.get("fileName") or source.get("file_name")
+        sheet_title = source.get("sheetTitle") or source.get("sheet_title")
+        sheet_name = source.get("sheetName") or source.get("sheet_name")
+        parts = [
+            str(value).strip()
+            for value in (collection_name, file_name, sheet_title or sheet_name)
+            if value is not None and str(value).strip()
+        ]
+        return " / ".join(parts)
+
+    def _unique_column_name(self, dataframe: pd.DataFrame, base_name: str) -> str:
+        if base_name not in dataframe.columns:
+            return base_name
+        index = 2
+        while f"{base_name}{index}" in dataframe.columns:
+            index += 1
+        return f"{base_name}{index}"
 
     def generated_path(self, output_id: str) -> Path:
         if Path(output_id).name != output_id or Path(output_id).suffix.lower() != ".xlsx":
