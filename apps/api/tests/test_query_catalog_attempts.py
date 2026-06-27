@@ -39,6 +39,28 @@ class FailingExplainAiAdapter(FakeAiAdapter):
         raise AiResponseError("AI 服务返回格式异常：choices 为空。")
 
 
+class CoverageRepairAiAdapter(FakeAiAdapter):
+    def generate_sql(self, question: str, schema_text: str) -> GeneratedSql:
+        self.generated_schema_texts.append(schema_text)
+        return GeneratedSql(sql='SELECT "value" FROM "file_1_sheet_1";', raw_response="{}")
+
+    def repair_sql(
+        self,
+        question: str,
+        schema_text: str,
+        sql: str,
+        error: str,
+    ) -> GeneratedSql:
+        self.repair_calls.append((schema_text, sql, error))
+        return GeneratedSql(
+            sql=(
+                'SELECT "value" FROM "file_1_sheet_1" '
+                'UNION ALL SELECT "value" FROM "file_1_sheet_2";'
+            ),
+            raw_response="{}",
+        )
+
+
 class FakeCatalogRepository:
     def __init__(self, matches: list[dict]) -> None:
         self.matches = matches
@@ -124,10 +146,11 @@ def test_all_files_query_expands_catalog_candidates_before_recording_empty_resul
             "tableName": "sheet_20",
         }
     ]
-    assert ai_adapter.generated_schema_texts == ["schema-size:8", "schema-size:20"]
-    assert ai_adapter.repair_calls == []
+    assert ai_adapter.generated_schema_texts == ["schema-size:20"]
+    assert len(ai_adapter.repair_calls) == 1
+    assert "多个相关表" in ai_adapter.repair_calls[0][2]
     assert executed_sql == [
-        'SELECT "value" FROM "file_1_sheet_1";',
+        'SELECT "value" FROM "file_1_sheet_20";',
         'SELECT "value" FROM "file_1_sheet_20";',
     ]
 
@@ -176,6 +199,48 @@ def test_catalog_attempts_preserve_catalog_alias_for_matching_sheet(
             "table_alias": "file_3_sheet1",
         }
     ]
+
+
+def test_all_files_query_repairs_when_sql_uses_only_one_of_multiple_candidates(
+    temp_workspace,
+    reset_settings_cache,
+) -> None:
+    service = QueryService()
+    matches = [
+        {"file_id": "file_1", "sheet_id": "sheet_1", "table_alias": "file_1_sheet_1"},
+        {"file_id": "file_1", "sheet_id": "sheet_2", "table_alias": "file_1_sheet_2"},
+    ]
+    mappings = [
+        {
+            "database_alias": "dbfind_file_1",
+            "database_path": "file_1.duckdb",
+            "file_id": "file_1",
+            "sheet_id": "sheet_1",
+            "source_table": "sheet_1",
+            "table_alias": "file_1_sheet_1",
+        },
+        {
+            "database_alias": "dbfind_file_1",
+            "database_path": "file_1.duckdb",
+            "file_id": "file_1",
+            "sheet_id": "sheet_2",
+            "source_table": "sheet_2",
+            "table_alias": "file_1_sheet_2",
+        },
+    ]
+    ai_adapter = CoverageRepairAiAdapter()
+
+    service.schema_service = FakeSchemaService(matches)
+    service.ai_adapter = ai_adapter
+    service._all_files_table_mappings = lambda: mappings
+    service._sources_for_file = lambda file_id: []
+    service._execute_sql = lambda scope, database_path, table_mappings, sql: [{"value": 1}]
+
+    response = service.run(QueryRequest(question="查询指标", scope="all"))
+
+    assert "UNION ALL" in response.sql
+    assert response.was_repaired is True
+    assert "多个相关表" in response.repair_error
 
 
 def test_execution_mappings_override_stale_aliases_for_sources(

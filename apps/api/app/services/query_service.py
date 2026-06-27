@@ -81,7 +81,7 @@ class QueryService:
             generated = repaired
 
         if not rows:
-            repair_error = repair_error or "SQL 执行成功，但结果为空。请放宽文本匹配条件，兼容中文空格、简称和全称。"
+            repair_error = repair_error or "SQL 执行成功，但结果为空。请放宽文本匹配条件，兼容空白、标点、全半角、大小写或前后缀差异。"
             repaired = self.ai_adapter.repair_sql(
                 payload.question,
                 schema_text,
@@ -235,7 +235,7 @@ class QueryService:
             raise ValueError("候选表查询为空")
 
         if not rows:
-            repair_error = repair_error or "SQL 执行成功，但结果为空。请放宽文本匹配条件，兼容中文空格、简称和全称。"
+            repair_error = repair_error or "SQL 执行成功，但结果为空。请放宽文本匹配条件，兼容空白、标点、全半角、大小写或前后缀差异。"
             repaired = self.ai_adapter.repair_sql(
                 payload.question,
                 schema_text,
@@ -256,6 +256,32 @@ class QueryService:
 
         if not rows and scope == "all":
             raise ValueError("候选表查询为空")
+
+        if scope == "all":
+            coverage_note = self._coverage_repair_reason(sql, execution_table_mappings)
+            if coverage_note:
+                try:
+                    repaired = self.ai_adapter.repair_sql(
+                        payload.question,
+                        schema_text,
+                        sql,
+                        coverage_note,
+                    )
+                    ensure_readonly_select(repaired.sql)
+                    repaired_rows = self._execute_sql(
+                        scope,
+                        database_path,
+                        self._table_mappings_for_sql(repaired.sql, execution_table_mappings),
+                        repaired.sql,
+                    )
+                    if repaired_rows:
+                        repair_error = coverage_note
+                        repaired_sql = repaired.sql
+                        sql = repaired.sql
+                        rows = repaired_rows
+                        generated = repaired
+                except Exception:
+                    pass
 
         columns = list(rows[0].keys()) if rows else []
         explanation = self._safe_explain_result(payload.question, sql, rows[:20])
@@ -313,10 +339,8 @@ class QueryService:
         base_mappings = all_table_mappings or self._all_files_table_mappings()
         mappings_by_alias = {mapping["table_alias"]: mapping for mapping in base_mappings}
         mappings_by_sheet = {mapping["sheet_id"]: mapping for mapping in base_mappings}
-        for limit in (8, 20, 50):
-            selected = catalog_matches[:limit]
-            if not selected:
-                continue
+        if catalog_matches:
+            selected = catalog_matches
             schema_text = self.schema_service.build_schema_text_for_catalog_entries(
                 selected,
                 question=question,
@@ -363,6 +387,18 @@ class QueryService:
         for mapping in execution_table_mappings:
             by_alias[mapping["table_alias"]] = mapping
         return list(by_alias.values())
+
+    def _coverage_repair_reason(self, sql: str, execution_table_mappings: list[dict]) -> str | None:
+        referenced = self._table_names_in_sql(sql)
+        if len(execution_table_mappings) <= 1 or len(referenced) != 1:
+            return None
+        candidate_aliases = {mapping["table_alias"] for mapping in execution_table_mappings}
+        if not referenced.issubset(candidate_aliases):
+            return None
+        return (
+            "候选来源包含多个相关表，但 SQL 只引用了其中一个表。"
+            "请检查是否需要按来源、文件、Sheet 或时间维度返回多来源对比，避免只给出局部答案。"
+        )
 
     def _safe_explain_result(self, question: str, sql: str, preview_rows: list[dict]) -> str:
         try:
@@ -512,9 +548,8 @@ class QueryService:
                 {
                     "collectionId": collection["id"] if collection else None,
                     "collectionName": collection["name"] if collection else None,
-                    "sourceRegion": collection.get("source_region") if collection else None,
-                    "sourceYear": collection.get("source_year") if collection else None,
-                    "sourceType": collection.get("source_type") if collection else None,
+                    "collectionTags": collection.get("tags") if collection else [],
+                    "collectionMetadata": collection.get("metadata") if collection else {},
                     "fileId": data_file["id"],
                     "fileName": data_file["name"],
                     "sheetId": sheet["id"],
@@ -542,16 +577,17 @@ class QueryService:
         if not chain:
             return None
 
+        tags: list[str] = []
+        metadata: dict[str, str] = {}
+        for item in reversed(chain):
+            for tag in item.get("tags") or []:
+                if tag not in tags:
+                    tags.append(tag)
+            for key, value in (item.get("metadata") or {}).items():
+                metadata[str(key)] = str(value)
         return {
             "id": chain[0]["id"],
             "name": " / ".join(item["name"] for item in reversed(chain)),
-            "source_region": self._first_context_value(chain, "source_region"),
-            "source_year": self._first_context_value(chain, "source_year"),
-            "source_type": self._first_context_value(chain, "source_type"),
+            "tags": tags,
+            "metadata": metadata,
         }
-
-    def _first_context_value(self, chain: list[dict], key: str):
-        for item in chain:
-            if item.get(key):
-                return item[key]
-        return None

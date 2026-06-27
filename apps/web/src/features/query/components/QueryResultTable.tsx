@@ -81,6 +81,12 @@ export function QueryResultTable({ result }: QueryResultTableProps) {
             </div>
           </div>
           <p className="result-explanation">{result.explanation || "查询已完成。"}</p>
+          {result.wasRepaired && result.repairError && (
+            <div className="result-validation-note">
+              <strong>校验修复</strong>
+              <span>{result.repairError}</span>
+            </div>
+          )}
           <SourceSummary sources={result.sources} />
         </div>
       </div>
@@ -163,11 +169,6 @@ function SourceSummary({ sources }: { sources: QuerySource[] }) {
             }}
           >
             <strong>{source.collectionName || source.fileName}</strong>
-            <span>
-              {source.sourceRegion && `${source.sourceRegion} / `}
-              {source.sourceYear && `${source.sourceYear} / `}
-              {source.sourceType || "未识别资料类型"}
-            </span>
             <small>
               {source.fileName} / {source.sheetTitle || source.sheetName}
             </small>

@@ -6,6 +6,7 @@ import {
   deleteCollection,
   listAllCollections,
   listCollections,
+  suggestCollectionMetadata,
   updateCollection
 } from "./api";
 
@@ -70,6 +71,12 @@ export function useUpdateCollection() {
       queryClient.invalidateQueries({ queryKey: ["collections"] });
       queryClient.invalidateQueries({ queryKey: ["files"] });
     }
+  });
+}
+
+export function useSuggestCollectionMetadata() {
+  return useMutation({
+    mutationFn: suggestCollectionMetadata
   });
 }
 

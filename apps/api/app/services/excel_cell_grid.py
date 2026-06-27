@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import re
 from typing import Any
 
 from openpyxl import load_workbook
@@ -13,6 +14,7 @@ class RawCell:
     col: int
     address: str
     value: Any
+    display_value: Any | None = None
     fill_color: str | None = None
     bold: bool = False
     merged_range: str | None = None
@@ -81,6 +83,7 @@ class RawCellGridExtractor:
                         col=cell.column,
                         address=cell.coordinate,
                         value=cell.value,
+                        display_value=self._display_value(cell.value, cell.number_format),
                         fill_color=self._fill_color(cell),
                         bold=bool(cell.font and cell.font.bold),
                         merged_range=self._merged_range_for_cell(cell.row, cell.column, merged_ranges),
@@ -121,9 +124,12 @@ class RawCellGridExtractor:
         import xlrd
 
         workbook = xlrd.open_workbook(file_path, formatting_info=True)
-        return [self._extract_xls_sheet(workbook.sheet_by_index(index)) for index in range(workbook.nsheets)]
+        return [
+            self._extract_xls_sheet(workbook.sheet_by_index(index), workbook)
+            for index in range(workbook.nsheets)
+        ]
 
-    def _extract_xls_sheet(self, worksheet) -> RawCellGrid:
+    def _extract_xls_sheet(self, worksheet, workbook) -> RawCellGrid:
         merged_ranges = [
             RawMergedRange(
                 address=self._range_address(row_start + 1, row_end, col_start + 1, col_end),
@@ -142,12 +148,20 @@ class RawCellGridExtractor:
                     continue
                 row = row_index + 1
                 col = col_index + 1
+                normalized_value = self._normalize_xls_value(value)
                 cells.append(
                     RawCell(
                         row=row,
                         col=col,
                         address=self._address(row, col),
-                        value=self._normalize_xls_value(value),
+                        value=normalized_value,
+                        display_value=self._xls_display_value(
+                            normalized_value,
+                            worksheet,
+                            workbook,
+                            row_index,
+                            col_index,
+                        ),
                         merged_range=self._merged_range_for_cell(row, col, merged_ranges),
                     )
                 )
@@ -163,6 +177,42 @@ class RawCellGridExtractor:
         if isinstance(value, float) and value.is_integer():
             return int(value)
         return value
+
+    def _xls_display_value(self, value, worksheet, workbook, row_index: int, col_index: int):
+        number_format = self._xls_number_format(worksheet, workbook, row_index, col_index)
+        return self._display_value(value, number_format)
+
+    def _xls_number_format(self, worksheet, workbook, row_index: int, col_index: int) -> str | None:
+        try:
+            xf_index = worksheet.cell_xf_index(row_index, col_index)
+            xf = workbook.xf_list[xf_index]
+            cell_format = workbook.format_map.get(xf.format_key)
+        except (AttributeError, IndexError, KeyError, TypeError):
+            return None
+        return getattr(cell_format, "format_str", None)
+
+    def _display_value(self, value, number_format: str | None):
+        if value is None:
+            return None
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            return value
+        decimals = self._display_decimal_places(number_format or "")
+        if decimals is None:
+            return value
+        return f"{value:.{decimals}f}"
+
+    def _display_decimal_places(self, number_format: str) -> int | None:
+        if not number_format or number_format == "General":
+            return None
+        first_section = number_format.split(";", 1)[0]
+        first_section = re.sub(r'"[^"]*"', "", first_section)
+        if "." not in first_section:
+            return None
+        decimal_part = first_section.split(".", 1)[1]
+        match = re.match(r"([0#?]+)", decimal_part)
+        if not match:
+            return None
+        return len(match.group(1))
 
     def _range_address(self, min_row: int, max_row: int, min_col: int, max_col: int) -> str:
         return f"{self._address(min_row, min_col)}:{self._address(max_row, max_col)}"

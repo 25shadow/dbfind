@@ -164,29 +164,18 @@ class SchemaService:
                 else []
             ),
             *(
-                [
-                    f'-- source_region: "{self._escape_comment(str(collection["source_region"]))}"'
-                ]
-                if collection and collection.get("source_region")
-                else []
-            ),
-            *(
-                [f'-- source_year: {collection["source_year"]}']
-                if collection and collection.get("source_year")
+                [f'-- collection_tags: "{self._escape_comment(", ".join(collection["tags"]))}"']
+                if collection and collection.get("tags")
                 else []
             ),
             *(
                 [
-                    f'-- source_type: "{self._escape_comment(str(collection["source_type"]))}"'
+                    "-- collection_metadata: "
+                    + self._escape_comment(
+                        json.dumps(collection["metadata"], ensure_ascii=False, separators=(",", ":"))
+                    )
                 ]
-                if collection and collection.get("source_type")
-                else []
-            ),
-            *(
-                [
-                    f'-- source_scope: "{self._escape_comment(str(collection["source_scope"]))}"'
-                ]
-                if collection and collection.get("source_scope")
+                if collection and collection.get("metadata")
                 else []
             ),
             *(
@@ -370,9 +359,7 @@ class SchemaService:
         collection = self._collection_context_for_file(data_file)
         source_parts = [
             str(collection.get("name") if collection else ""),
-            str(collection.get("source_region") if collection else ""),
-            str(collection.get("source_year") if collection else ""),
-            str(collection.get("source_type") if collection else ""),
+            self._metadata_search_text(collection),
             str(data_file.get("name") or ""),
             str(sheet.get("name") or ""),
             str(sheet.get("title") or ""),
@@ -437,24 +424,22 @@ class SchemaService:
                 str(sheet.get("title") or ""),
                 str(sheet.get("subtitle") or ""),
                 str(collection.get("name") if collection else ""),
-                str(collection.get("source_region") if collection else ""),
-                str(collection.get("source_year") if collection else ""),
-                str(collection.get("source_type") if collection else ""),
+                self._metadata_search_text(collection),
                 column_text,
             ]
         )
 
     def _query_terms(self, question: str) -> list[str]:
-        compact = question.replace(" ", "")
-        terms = {compact}
-        for year in range(1900, 2101):
-            text = str(year)
-            if text in compact:
-                terms.add(text)
-        for size in range(2, min(8, len(compact)) + 1):
-            for index in range(0, len(compact) - size + 1):
-                terms.add(compact[index : index + size])
-        return sorted(terms, key=len, reverse=True)[:32]
+        compact = question.replace(" ", "").replace("\u3000", "")
+        terms: set[str] = set(re.findall(r"\d+(?:\.\d+)?", compact))
+        if compact:
+            terms.add(compact)
+        for run in re.findall(r"[\u4e00-\u9fffA-Za-z]+", compact):
+            terms.add(run)
+            for size in range(2, min(8, len(run)) + 1):
+                for index in range(0, len(run) - size + 1):
+                    terms.add(run[index : index + size])
+        return sorted(terms, key=lambda item: (-len(item), item))[:32]
 
     def _collection_context_for_file(self, data_file: dict | None) -> dict | None:
         if not data_file or not data_file.get("collection_id"):
@@ -472,17 +457,26 @@ class SchemaService:
             return None
 
         names = [item["name"] for item in reversed(chain)]
+        tags: list[str] = []
+        metadata: dict[str, str] = {}
+        for item in reversed(chain):
+            for tag in item.get("tags") or []:
+                if tag not in tags:
+                    tags.append(tag)
+            for key, value in (item.get("metadata") or {}).items():
+                metadata[str(key)] = str(value)
         return {
             "id": chain[0]["id"],
             "name": " / ".join(names),
-            "source_region": self._first_context_value(chain, "source_region"),
-            "source_year": self._first_context_value(chain, "source_year"),
-            "source_type": self._first_context_value(chain, "source_type"),
-            "source_scope": self._first_context_value(chain, "source_scope"),
+            "tags": tags,
+            "metadata": metadata,
         }
 
-    def _first_context_value(self, chain: list[dict], key: str):
-        for item in chain:
-            if item.get(key):
-                return item[key]
-        return None
+    def _metadata_search_text(self, collection: dict | None) -> str:
+        if not collection:
+            return ""
+        parts = [str(tag) for tag in collection.get("tags") or []]
+        for key, value in (collection.get("metadata") or {}).items():
+            parts.append(str(key))
+            parts.append(str(value))
+        return " ".join(parts)

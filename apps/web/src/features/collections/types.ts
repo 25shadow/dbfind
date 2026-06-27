@@ -1,10 +1,8 @@
 export type Collection = {
   id: string;
   name: string;
-  sourceRegion?: string | null;
-  sourceYear?: number | null;
-  sourceType?: string | null;
-  sourceScope?: string | null;
+  tags: string[];
+  metadata: Record<string, string>;
   parentId?: string | null;
   fileCount: number;
   createdAt: string;

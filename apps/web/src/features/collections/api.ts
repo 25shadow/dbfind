@@ -10,18 +10,49 @@ export function listAllCollections() {
   return apiRequest<Collection[]>("/api/collections/all");
 }
 
-export function createCollection(payload: { name: string; parentId?: string }) {
+export function createCollection(payload: {
+  name: string;
+  tags?: string[];
+  metadata?: Record<string, string>;
+  parentId?: string;
+}) {
   return apiRequest<Collection>("/api/collections", {
     method: "POST",
-    body: JSON.stringify({ name: payload.name, parentId: payload.parentId })
+    body: JSON.stringify({
+      name: payload.name,
+      tags: payload.tags ?? [],
+      metadata: payload.metadata ?? {},
+      parentId: payload.parentId
+    })
   });
 }
 
-export function updateCollection(payload: { id: string; name: string; parentId?: string | null }) {
+export function updateCollection(payload: {
+  id: string;
+  name: string;
+  tags?: string[];
+  metadata?: Record<string, string>;
+  parentId?: string | null;
+}) {
   return apiRequest<Collection>(`/api/collections/${payload.id}`, {
     method: "PATCH",
-    body: JSON.stringify({ name: payload.name, parentId: payload.parentId })
+    body: JSON.stringify({
+      name: payload.name,
+      tags: payload.tags ?? [],
+      metadata: payload.metadata ?? {},
+      parentId: payload.parentId
+    })
   });
+}
+
+export function suggestCollectionMetadata(payload: { name: string }) {
+  return apiRequest<{ tags: string[]; metadata: Record<string, string> }>(
+    "/api/collections/metadata-suggestions",
+    {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }
+  );
 }
 
 export function bulkMove(payload: {

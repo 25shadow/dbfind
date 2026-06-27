@@ -9,11 +9,11 @@ import {
   usePreviewAgentPlan
 } from "../hooks";
 import { useFileSelection } from "../../files/store";
-import type { AgentOperationPreview, AgentPlan } from "../types";
+import type { AgentOperationPreview, AgentPlan, AgentTaskLog } from "../types";
 
 export function QueryPanel() {
   const [question, setQuestion] = useState("");
-  const [scope, setScope] = useState<"selected" | "all">("selected");
+  const [scope, setScope] = useState<"selected" | "all">("all");
   const selectedFileId = useFileSelection((state) => state.selectedFileId);
   const agentPlanMutation = useCreateAgentPlan();
   const executeAgentMutation = useExecuteAgentPlan();
@@ -27,24 +27,30 @@ export function QueryPanel() {
   const isQueryDisabled = isRunning || (scope === "selected" && !selectedFileId);
   const plan = agentPlanMutation.data?.plan;
   const taskId = agentPlanMutation.data?.taskId || undefined;
+  const runLogs = buildCurrentRunLogs({
+    isPlanning: agentPlanMutation.isPending,
+    hasPlan: Boolean(plan),
+    isQueryRunning: queryMutation.isPending,
+    hasQueryResult: Boolean(queryMutation.data),
+    isPreviewing: previewAgentMutation.isPending,
+    hasPreview: Boolean(previewAgentMutation.data),
+    previewError: previewAgentMutation.error instanceof Error ? previewAgentMutation.error.message : undefined,
+    isExecuting: executeAgentMutation.isPending,
+    hasExecuteResult: Boolean(executeAgentMutation.data),
+    executeError: executeAgentMutation.error instanceof Error ? executeAgentMutation.error.message : undefined
+  });
 
   function submitQuery() {
+    if (!question.trim()) {
+      return;
+    }
+
     if (scope === "selected" && !selectedFileId) {
       return;
     }
 
     previewAgentMutation.reset();
     executeAgentMutation.reset();
-
-    if (!shouldPlanWithAgent(question)) {
-      agentPlanMutation.reset();
-      queryMutation.mutate({
-        fileId: scope === "selected" ? selectedFileId : undefined,
-        question,
-        scope
-      });
-      return;
-    }
 
     agentPlanMutation.mutate({
       fileId: scope === "selected" ? selectedFileId : undefined,
@@ -144,6 +150,7 @@ export function QueryPanel() {
           isQueryRunning={queryMutation.isPending}
           isExecuting={executeAgentMutation.isPending}
           executeResult={executeAgentMutation.data}
+          logs={runLogs}
           onExecute={() => {
             executeAgentMutation.mutate(
               {
@@ -166,36 +173,6 @@ export function QueryPanel() {
   );
 }
 
-function shouldPlanWithAgent(question: string) {
-  const text = question.trim();
-  if (!text) {
-    return false;
-  }
-
-  const operationTerms = [
-    "生成",
-    "导出",
-    "工作簿",
-    "表格",
-    "报表",
-    "保存",
-    "写入",
-    "清洗",
-    "合并",
-    "格式",
-    "设计",
-    "修改",
-    "替换",
-    "重命名",
-    "去重",
-    "空值",
-    "xlsx",
-    "Excel",
-    "excel"
-  ];
-  return operationTerms.some((term) => text.includes(term));
-}
-
 function AgentPlanPreview({
   plan,
   taskId,
@@ -206,6 +183,7 @@ function AgentPlanPreview({
   isQueryRunning,
   isExecuting,
   executeResult,
+  logs,
   onExecute
 }: {
   plan: AgentPlan;
@@ -217,6 +195,7 @@ function AgentPlanPreview({
   isQueryRunning: boolean;
   isExecuting: boolean;
   executeResult?: { downloadUrl: string; fileName: string };
+  logs: AgentTaskLog[];
   onExecute: () => void;
 }) {
   const isQuery = plan.intent === "query";
@@ -305,6 +284,8 @@ function AgentPlanPreview({
         ))}
       </ol>
 
+      <AgentRunLogPanel logs={logs} />
+
       {plan.requiresConfirmation && (
         <AgentOperationPreviewPanel
           preview={preview}
@@ -334,6 +315,22 @@ function AgentPlanPreview({
           </div>
         </div>
       )}
+    </details>
+  );
+}
+
+function AgentRunLogPanel({ logs }: { logs: AgentTaskLog[] }) {
+  return (
+    <details className="agent-run-log">
+      <summary>运行过程</summary>
+      <ol>
+        {logs.map((log, index) => (
+          <li key={`${log.stage}-${log.status}-${index}`} className={`is-${log.status}`}>
+            <span>{stageLabel(log.stage)}</span>
+            <p>{log.message}</p>
+          </li>
+        ))}
+      </ol>
     </details>
   );
 }
@@ -424,4 +421,68 @@ function toolLabel(tool: string) {
     workbook_style: "设计表格"
   };
   return labels[tool] || tool;
+}
+
+function stageLabel(stage: string) {
+  const labels: Record<string, string> = {
+    plan: "规划",
+    query: "查询",
+    preview: "预览",
+    execute: "执行"
+  };
+  return labels[stage] || stage;
+}
+
+function buildCurrentRunLogs({
+  isPlanning,
+  hasPlan,
+  isQueryRunning,
+  hasQueryResult,
+  isPreviewing,
+  hasPreview,
+  previewError,
+  isExecuting,
+  hasExecuteResult,
+  executeError
+}: {
+  isPlanning: boolean;
+  hasPlan: boolean;
+  isQueryRunning: boolean;
+  hasQueryResult: boolean;
+  isPreviewing: boolean;
+  hasPreview: boolean;
+  previewError?: string;
+  isExecuting: boolean;
+  hasExecuteResult: boolean;
+  executeError?: string;
+}): AgentTaskLog[] {
+  const now = new Date().toISOString();
+  const logs: AgentTaskLog[] = [];
+  if (isPlanning) {
+    logs.push({ timestamp: now, stage: "plan", status: "running", message: "正在分析任务并生成计划" });
+    return logs;
+  }
+  if (hasPlan) {
+    logs.push({ timestamp: now, stage: "plan", status: "completed", message: "已生成可审阅计划" });
+  }
+  if (isQueryRunning) {
+    logs.push({ timestamp: now, stage: "query", status: "running", message: "正在查询数据" });
+  } else if (hasQueryResult) {
+    logs.push({ timestamp: now, stage: "query", status: "completed", message: "查询完成" });
+  }
+  if (isPreviewing) {
+    logs.push({ timestamp: now, stage: "preview", status: "running", message: "正在生成操作预览" });
+  } else if (previewError) {
+    logs.push({ timestamp: now, stage: "preview", status: "failed", message: previewError });
+  } else if (hasPreview) {
+    logs.push({ timestamp: now, stage: "preview", status: "completed", message: "操作预览已生成" });
+  }
+  if (isExecuting) {
+    logs.push({ timestamp: now, stage: "execute", status: "running", message: "正在执行并生成工作簿" });
+  } else if (executeError) {
+    logs.push({ timestamp: now, stage: "execute", status: "failed", message: executeError });
+  } else if (hasExecuteResult) {
+    logs.push({ timestamp: now, stage: "execute", status: "completed", message: "工作簿已生成" });
+  }
+  return logs;
 }

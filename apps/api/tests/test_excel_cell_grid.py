@@ -19,6 +19,8 @@ def test_raw_cell_grid_extractor_preserves_values_styles_and_merges(tmp_path):
     sheet["A10"] = "韶关"
     sheet["B10"] = "Shaoguan"
     sheet["C10"] = 50698
+    sheet["D10"] = 12.34567
+    sheet["D10"].number_format = "0.00"
     sheet["A5"].fill = PatternFill("solid", fgColor="FFFF99")
 
     path = tmp_path / "grid.xlsx"
@@ -34,9 +36,17 @@ def test_raw_cell_grid_extractor_preserves_values_styles_and_merges(tmp_path):
     assert grid.cell_at(5, 1).value == "市别"
     assert grid.cell_at(5, 1).fill_color == "00FFFF99"
     assert grid.cell_at(10, 3).value == 50698
+    assert grid.cell_at(10, 4).value == 12.34567
+    assert grid.cell_at(10, 4).display_value == "12.35"
 
 
 def test_raw_cell_grid_extractor_supports_xls_with_xlrd(monkeypatch, tmp_path):
+    class FakeFormat:
+        format_str = "0.00"
+
+    class FakeXf:
+        format_key = 7
+
     class FakeSheet:
         name = "OldSheet"
         nrows = 3
@@ -53,8 +63,13 @@ def test_raw_cell_grid_extractor_supports_xls_with_xlrd(monkeypatch, tmp_path):
             }
             return values.get((row, col), "")
 
+        def cell_xf_index(self, row, col):
+            return 0 if (row, col) == (2, 1) else None
+
     class FakeBook:
         nsheets = 1
+        xf_list = [FakeXf()]
+        format_map = {7: FakeFormat()}
 
         def sheet_by_index(self, index):
             assert index == 0
@@ -78,3 +93,4 @@ def test_raw_cell_grid_extractor_supports_xls_with_xlrd(monkeypatch, tmp_path):
     assert grid.cell_at(1, 1).merged_range == "A1:B1"
     assert grid.cell_at(2, 2).value == 2024
     assert grid.cell_at(3, 2).value == 12.5
+    assert grid.cell_at(3, 2).display_value == "12.50"

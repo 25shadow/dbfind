@@ -6,7 +6,7 @@ from app.schemas.agent import AgentExecuteResponse, AgentPlan, AgentPreview, Age
 from app.main import create_app
 
 
-def test_agent_plan_route_returns_502_when_sdk_plan_fails(temp_workspace):
+def test_agent_plan_route_falls_back_to_readonly_query_when_route_classifier_is_unavailable(temp_workspace):
     client = TestClient(create_app())
 
     response = client.post(
@@ -14,8 +14,10 @@ def test_agent_plan_route_returns_502_when_sdk_plan_fails(temp_workspace):
         json={"instruction": "清洗全部表格", "scope": "all"},
     )
 
-    assert response.status_code == 502
-    assert "OpenAI Agents SDK" in response.json()["detail"]
+    assert response.status_code == 200
+    body = response.json()
+    assert body["taskId"] is None
+    assert body["plan"]["intent"] == "query"
 
 
 def test_agent_plan_route_summarizes_verbose_sdk_json_error(temp_workspace):
@@ -110,6 +112,32 @@ def test_agent_plan_route_persists_task_and_returns_task_id(temp_workspace):
     assert tasks[0]["status"] == "needs_confirmation"
 
 
+def test_agent_plan_route_does_not_persist_readonly_query_plan(temp_workspace):
+    client = TestClient(create_app())
+    plan = AgentPlan(
+        intent="query",
+        scope="all",
+        summary="查询数据",
+        requiresConfirmation=False,
+        riskLevel="low",
+        steps=[AgentStep(tool="query", purpose="查询", params={"question": "查水田", "scope": "all"})],
+        preview=AgentPreview(),
+    )
+
+    with patch("app.api.routes.agent.AgentService") as service_class:
+        service_class.return_value.plan = AsyncMock(return_value=plan)
+        response = client.post(
+            "/api/agent/plan",
+            json={"instruction": "查水田", "scope": "all"},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["taskId"] is None
+    assert body["plan"]["intent"] == "query"
+    assert client.get("/api/agent/tasks").json()["tasks"] == []
+
+
 def test_agent_execute_route_updates_existing_task(temp_workspace):
     client = TestClient(create_app())
     plan_payload = {
@@ -186,7 +214,7 @@ def test_agent_task_route_returns_404_when_deleting_missing_task(temp_workspace)
     assert response.status_code == 404
 
 
-def test_agent_preview_route_updates_task_when_preview_fails(temp_workspace):
+def test_agent_preview_route_marks_task_as_needs_revision_when_preview_fails(temp_workspace):
     client = TestClient(create_app())
     plan_payload = {
         "intent": "excel_operation",
@@ -216,5 +244,5 @@ def test_agent_preview_route_updates_task_when_preview_fails(temp_workspace):
 
     assert response.status_code == 400
     task = client.get(f"/api/agent/tasks/{task_id}").json()
-    assert task["status"] == "failed"
+    assert task["status"] == "needs_revision"
     assert task["error"] == "字段不存在: 金额"

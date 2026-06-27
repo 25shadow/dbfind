@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
+from app.core.config import get_settings
 from app.schemas.table_structure import TableStructurePlan
 from app.services.excel_cell_grid import RawCellGrid, RawCellGridExtractor
 from app.services.excel_parse_quality import ExcelParseQuality, ExcelParseQualityEvaluator
@@ -34,6 +35,7 @@ class ExcelStructurePipeline:
     """VLM-first structure-plan parsing pipeline for complex spreadsheets."""
 
     def __init__(self, vision_planner: VisionStructurePlanner | None = None) -> None:
+        self.settings = get_settings()
         self.grid_extractor = RawCellGridExtractor()
         self.sheet_renderer = SheetRenderer()
         self.vision_planner = vision_planner or VisionStructurePlanner()
@@ -82,9 +84,10 @@ class ExcelStructurePipeline:
         extracted = self.plan_extractor.extract(grid, plan)
         quality = self.quality_evaluator.evaluate(extracted.dataframe)
         issues = list(quality.issues)
-        if plan.confidence < 0.65:
+        confidence_threshold = self.settings.structure_confidence_threshold
+        if plan.confidence < confidence_threshold:
             issues.append("low_structure_confidence")
-        status = "ready" if quality.is_importable and plan.confidence >= 0.65 else "needs_review"
+        status = "ready" if quality.is_importable and plan.confidence >= confidence_threshold else "needs_review"
         return ExcelStructurePipelineResult(
             sheet_name=grid.sheet_name,
             block_region=plan.table_region,

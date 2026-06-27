@@ -7,9 +7,6 @@ def test_query_response_returns_stored_source_chain(temp_workspace, reset_settin
         {
             "collectionId": "collection_1",
             "collectionName": "广东省2022年农村统计年鉴",
-            "sourceRegion": "广东省",
-            "sourceYear": 2022,
-            "sourceType": "农村统计年鉴",
             "fileId": "file_1",
             "fileName": "download.xls",
             "sheetId": "file_1_1",

@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pandas as pd
+import pytest
 from openpyxl import load_workbook
 
 from app.repositories.file_repository import FileRepository
@@ -342,3 +343,52 @@ def test_execute_all_files_query_plan_writes_query_result_workbook(temp_workspac
     assert sheet["C3"].value == 132
     assert len(sheet.tables) == 1
     assert len(sheet.conditional_formatting) == 1
+
+
+def test_preview_rejects_dangerous_dataframe_expression_before_loading_file(temp_workspace):
+    plan = AgentPlan(
+        intent="excel_operation",
+        scope="selected",
+        summary="危险预览",
+        requiresConfirmation=True,
+        riskLevel="medium",
+        steps=[
+            AgentStep(
+                tool="dataframe_transform",
+                purpose="危险表达式",
+                params={
+                    "operations": [
+                        {
+                            "type": "query",
+                            "expression": "__import__('os').system('touch /tmp/dbfind-owned')",
+                        }
+                    ]
+                },
+            )
+        ],
+        preview=AgentPreview(),
+    )
+
+    with pytest.raises(ValueError, match="表达式包含不允许的内容"):
+        AgentExecutionService().preview(plan=plan, file_id="missing-file")
+
+
+def test_execute_rejects_writer_file_path_before_creating_output(temp_workspace):
+    plan = AgentPlan(
+        intent="excel_operation",
+        scope="selected",
+        summary="指定路径",
+        requiresConfirmation=True,
+        riskLevel="medium",
+        steps=[
+            AgentStep(
+                tool="workbook_writer",
+                purpose="写入指定路径",
+                params={"outputPath": "/tmp/out.xlsx"},
+            )
+        ],
+        preview=AgentPreview(),
+    )
+
+    with pytest.raises(ValueError, match="不能指定文件路径"):
+        AgentExecutionService().execute(plan=plan, file_id="missing-file")

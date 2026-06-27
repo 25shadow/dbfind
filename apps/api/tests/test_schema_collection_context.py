@@ -9,10 +9,8 @@ def test_schema_text_includes_collection_context(temp_workspace, reset_settings_
     CollectionRepository().create_collection(
         collection_id="collection_1",
         name="广东省2022年农村统计年鉴",
-        source_region="广东省",
-        source_year=2022,
-        source_type="农村统计年鉴",
-        source_scope="province",
+        tags=["公开", "审核"],
+        metadata={"owner": "数据组", "period": "年度"},
         created_at="2026-06-12T00:00:00+00:00",
         updated_at="2026-06-12T00:00:00+00:00",
     )
@@ -57,9 +55,11 @@ def test_schema_text_includes_collection_context(temp_workspace, reset_settings_
     schema_text = SchemaService().build_schema_text("file_1")
 
     assert '-- collection: "广东省2022年农村统计年鉴"' in schema_text
-    assert '-- source_region: "广东省"' in schema_text
-    assert "-- source_year: 2022" in schema_text
-    assert '-- source_type: "农村统计年鉴"' in schema_text
+    assert '-- collection_tags: "公开, 审核"' in schema_text
+    assert '-- collection_metadata: {"owner":"数据组","period":"年度"}' in schema_text
+    assert "source_region" not in schema_text
+    assert "source_year" not in schema_text
+    assert "source_type" not in schema_text
 
 
 def test_schema_text_includes_question_relevant_row_examples(

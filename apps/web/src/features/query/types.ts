@@ -90,8 +90,16 @@ export type AgentTaskItem = {
   outputId?: string | null;
   downloadUrl?: string | null;
   error?: string | null;
+  logs?: AgentTaskLog[];
   createdAt: string;
   updatedAt: string;
+};
+
+export type AgentTaskLog = {
+  timestamp: string;
+  stage: string;
+  status: string;
+  message: string;
 };
 
 export type AgentTaskListResult = {
@@ -118,9 +126,8 @@ export type QueryResult = {
 export type QuerySource = {
   collectionId?: string | null;
   collectionName?: string | null;
-  sourceRegion?: string | null;
-  sourceYear?: number | null;
-  sourceType?: string | null;
+  collectionTags?: string[];
+  collectionMetadata?: Record<string, string>;
   fileId: string;
   fileName: string;
   sheetId: string;

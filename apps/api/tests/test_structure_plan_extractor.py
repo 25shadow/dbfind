@@ -135,3 +135,35 @@ def test_structure_plan_extractor_recovers_omitted_header_rows_above_vlm_plan(tm
         "住宿和_餐饮业_Hotels_and_Catering_Services",
         "信息传输_软件和信息_技术服务业_Information_Transmission_Software_and_Information_Technology",
     ]
+
+
+def test_structure_plan_extractor_uses_displayed_numeric_values(tmp_path):
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Displayed"
+    sheet["A1"] = "Name"
+    sheet["B1"] = "Value"
+    sheet["A2"] = "Alpha"
+    sheet["B2"] = 12.34567
+    sheet["B2"].number_format = "0.00"
+
+    path = tmp_path / "displayed.xlsx"
+    workbook.save(path)
+    grid = RawCellGridExtractor().extract(str(path))[0]
+    plan = TableStructurePlan(
+        tableRegion="A1:B2",
+        titleRows=[],
+        headerRows=[1],
+        dataStartRow=2,
+        dataEndRow=2,
+        rowHeaderColumns=["A"],
+        valueColumns=["B"],
+        categoryRows=[],
+        orientation="wide_table",
+        confidence=0.9,
+        source="manual",
+    )
+
+    extracted = StructurePlanExtractor().extract(grid, plan)
+
+    assert extracted.dataframe.iloc[0].to_dict() == {"Name": "Alpha", "Value": 12.35}

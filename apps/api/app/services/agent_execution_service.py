@@ -19,9 +19,11 @@ from app.schemas.query import QueryRequest
 from app.services.duckdb_service import DuckdbService
 from app.services.excel_operation_engine import (
     DataFrameOperationEngine,
+    WORKBOOK_DESIGN_DEFAULTS,
     WorkbookDesign,
     WorkbookOperationEngine,
 )
+from app.services.agent_plan_validator import AgentPlanValidationError, AgentPlanValidator
 from app.services.query_service import QueryService
 
 
@@ -36,8 +38,10 @@ class AgentExecutionService:
         self.query_service = QueryService()
         self.dataframe_engine = DataFrameOperationEngine()
         self.workbook_engine = WorkbookOperationEngine()
+        self.plan_validator = AgentPlanValidator()
 
     def execute(self, *, plan: AgentPlan, file_id: str | None) -> AgentExecuteResponse:
+        self._validate_plan(plan)
         if not plan.requires_confirmation:
             raise ValueError("只读查询计划不需要执行 Excel 写入")
 
@@ -60,6 +64,7 @@ class AgentExecutionService:
         )
 
     def preview(self, *, plan: AgentPlan, file_id: str | None) -> AgentOperationPreview:
+        self._validate_plan(plan)
         frames = self._frames_for_plan(plan, file_id)
         if not frames:
             raise ValueError("没有可预览的数据表")
@@ -198,11 +203,11 @@ class AgentExecutionService:
 
     def _workbook_design_from_plan(self, plan: AgentPlan) -> WorkbookDesign:
         number_formats: dict[str, str] = {}
-        header_fill = "E8F1FF"
-        freeze_header = True
-        autofilter = True
-        as_table = False
-        table_style = "Table Style Medium 2"
+        header_fill = WORKBOOK_DESIGN_DEFAULTS.header_fill
+        freeze_header = WORKBOOK_DESIGN_DEFAULTS.freeze_header
+        autofilter = WORKBOOK_DESIGN_DEFAULTS.autofilter
+        as_table = WORKBOOK_DESIGN_DEFAULTS.as_table
+        table_style = WORKBOOK_DESIGN_DEFAULTS.table_style
         conditional_formats: list[dict[str, Any]] = []
         charts: list[dict[str, Any]] = []
         for step in plan.steps:
@@ -262,3 +267,9 @@ class AgentExecutionService:
         if not isinstance(parsed, dict):
             raise ValueError("Agent 步骤参数必须是 JSON 对象")
         return parsed
+
+    def _validate_plan(self, plan: AgentPlan) -> None:
+        try:
+            self.plan_validator.validate(plan)
+        except AgentPlanValidationError as exc:
+            raise ValueError(str(exc)) from exc

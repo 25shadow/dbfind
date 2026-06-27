@@ -800,6 +800,21 @@ button {
   opacity: 0.55;
 }
 
+.dialog-secondary-button {
+  border: 1px solid #cbd5e1;
+  border-radius: 7px;
+  background: #f8fafc;
+  color: #172026;
+  cursor: pointer;
+  font-weight: 800;
+  padding: 9px 11px;
+}
+
+.dialog-secondary-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .dialog-field {
   display: grid;
   gap: 6px;
@@ -811,12 +826,24 @@ button {
   font-weight: 700;
 }
 
-.dialog-field input {
+.dialog-field input,
+.dialog-field textarea {
   width: 100%;
   border: 1px solid #cbd5e1;
   border-radius: 7px;
   color: #172026;
   padding: 10px 11px;
+}
+
+.dialog-field textarea {
+  min-height: 96px;
+  resize: vertical;
+}
+
+.dialog-error {
+  color: #b42318;
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .move-target-list {
@@ -1658,6 +1685,63 @@ button {
   margin: 3px 0 0;
 }
 
+.agent-run-log {
+  border: 1px solid #d7dee7;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #405468;
+  font-size: 12px;
+  padding: 9px 10px;
+}
+
+.agent-run-log summary {
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.agent-run-log ol {
+  display: grid;
+  gap: 7px;
+  list-style: none;
+  margin: 9px 0 0;
+  padding: 0;
+}
+
+.agent-run-log li {
+  display: grid;
+  grid-template-columns: 56px 1fr;
+  gap: 8px;
+  align-items: start;
+}
+
+.agent-run-log li span {
+  border-radius: 999px;
+  background: #eef5ff;
+  color: #274761;
+  font-weight: 800;
+  padding: 3px 7px;
+  text-align: center;
+}
+
+.agent-run-log li.is-running span {
+  background: #fff3d8;
+  color: #8a5c00;
+}
+
+.agent-run-log li.is-completed span {
+  background: #e8f6ee;
+  color: #21613b;
+}
+
+.agent-run-log li.is-failed span {
+  background: #fff0ed;
+  color: #a22a1d;
+}
+
+.agent-run-log p {
+  margin: 2px 0 0;
+}
+
 .agent-preview-panel {
   display: grid;
   gap: 8px;
@@ -1863,6 +1947,22 @@ button {
   margin: 0;
   margin-top: 8px;
   overflow: hidden;
+}
+
+.result-validation-note {
+  display: grid;
+  gap: 3px;
+  border: 1px solid #d7dee7;
+  border-radius: 8px;
+  background: #fbfdff;
+  color: #405468;
+  font-size: 12px;
+  margin-top: 8px;
+  padding: 8px 10px;
+}
+
+.result-validation-note strong {
+  color: #172026;
 }
 
 .result-metrics {

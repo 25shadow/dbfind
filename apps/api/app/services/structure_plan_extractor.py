@@ -32,7 +32,7 @@ class StructurePlanExtractor:
             has_value = False
             for column_name, col_index in zip(columns, all_cols):
                 cell = self._cell_at(grid, row_index, col_index)
-                value = cell.value if cell else None
+                value = self._cell_extract_value(cell)
                 values.append(value)
                 if value not in (None, ""):
                     has_value = True
@@ -156,6 +156,19 @@ class StructurePlanExtractor:
             if cell.row == row and cell.col == col:
                 return cell
         return None
+
+    def _cell_extract_value(self, cell: RawCell | None):
+        if cell is None:
+            return None
+        value = cell.display_value if cell.display_value is not None else cell.value
+        if isinstance(value, str) and isinstance(cell.value, (int, float)):
+            normalized = value.replace(",", "").strip()
+            try:
+                parsed = float(normalized)
+            except ValueError:
+                return value
+            return int(parsed) if parsed.is_integer() else parsed
+        return value
 
     def _normalize_name(self, value: object) -> str:
         if isinstance(value, float) and value.is_integer():

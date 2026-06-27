@@ -4,10 +4,13 @@ from starlette.status import HTTP_204_NO_CONTENT
 from app.schemas.collections import (
     BulkMoveRequest,
     CollectionCreateRequest,
+    CollectionMetadataSuggestionRequest,
+    CollectionMetadataSuggestionResponse,
     CollectionMoveRequest,
     CollectionResponse,
     CollectionUpdateRequest,
 )
+from app.adapters.ai_adapter import AiAdapter, AiResponseError
 from app.schemas.files import FileResponse
 from app.services.collection_service import CollectionService
 from app.services.file_service import FileService
@@ -27,7 +30,23 @@ async def list_all_collections() -> list[CollectionResponse]:
 
 @router.post("", response_model=CollectionResponse)
 async def create_collection(payload: CollectionCreateRequest) -> CollectionResponse:
-    return CollectionService().create(payload.name, payload.parent_id)
+    return CollectionService().create(
+        payload.name,
+        payload.parent_id,
+        tags=payload.tags,
+        metadata=payload.metadata,
+    )
+
+
+@router.post("/metadata-suggestions", response_model=CollectionMetadataSuggestionResponse)
+async def suggest_collection_metadata(
+    payload: CollectionMetadataSuggestionRequest,
+) -> CollectionMetadataSuggestionResponse:
+    try:
+        suggestion = AiAdapter().suggest_collection_metadata(payload.name.strip())
+    except AiResponseError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return CollectionMetadataSuggestionResponse(**suggestion)
 
 
 @router.get("/{collection_id}", response_model=CollectionResponse)
@@ -40,7 +59,13 @@ async def update_collection(
     collection_id: str,
     payload: CollectionUpdateRequest,
 ) -> CollectionResponse:
-    return CollectionService().update(collection_id, payload.name, payload.parent_id)
+    return CollectionService().update(
+        collection_id,
+        payload.name,
+        payload.parent_id,
+        tags=payload.tags,
+        metadata=payload.metadata,
+    )
 
 
 @router.patch("/{collection_id}/move", response_model=CollectionResponse)
@@ -69,4 +94,3 @@ async def delete_collection(collection_id: str) -> None:
 async def upload_file_to_collection(collection_id: str, file: UploadFile) -> FileResponse:
     CollectionService().get(collection_id)
     return await FileService().upload(file, collection_id=collection_id)
-

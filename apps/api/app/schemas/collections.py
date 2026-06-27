@@ -1,18 +1,32 @@
 from pydantic import BaseModel, ConfigDict, Field
+from typing import Any
 
 
 class CollectionCreateRequest(BaseModel):
     name: str = Field(min_length=1)
+    tags: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
     parent_id: str | None = Field(default=None, alias="parentId")
 
 
 class CollectionUpdateRequest(BaseModel):
     name: str = Field(min_length=1)
+    tags: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
     parent_id: str | None = Field(default=None, alias="parentId")
 
 
 class CollectionMoveRequest(BaseModel):
     parent_id: str | None = Field(default=None, alias="parentId")
+
+
+class CollectionMetadataSuggestionRequest(BaseModel):
+    name: str = Field(min_length=1)
+
+
+class CollectionMetadataSuggestionResponse(BaseModel):
+    tags: list[str] = Field(default_factory=list)
+    metadata: dict[str, str] = Field(default_factory=dict)
 
 
 class BulkMoveRequest(BaseModel):
@@ -26,10 +40,8 @@ class CollectionResponse(BaseModel):
 
     id: str
     name: str
-    source_region: str | None = Field(default=None, alias="sourceRegion")
-    source_year: int | None = Field(default=None, alias="sourceYear")
-    source_type: str | None = Field(default=None, alias="sourceType")
-    source_scope: str | None = Field(default=None, alias="sourceScope")
+    tags: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
     parent_id: str | None = Field(default=None, alias="parentId")
     file_count: int = Field(default=0, alias="fileCount")
     created_at: str = Field(alias="createdAt")

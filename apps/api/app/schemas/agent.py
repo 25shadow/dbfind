@@ -90,6 +90,13 @@ class AgentOperationPreview(BaseModel):
     design: dict = Field(default_factory=dict)
 
 
+class AgentTaskLog(BaseModel):
+    timestamp: str
+    stage: str
+    status: str
+    message: str
+
+
 class AgentTaskItem(BaseModel):
     id: str
     instruction: str
@@ -100,6 +107,7 @@ class AgentTaskItem(BaseModel):
     output_id: str | None = Field(default=None, alias="outputId")
     download_url: str | None = Field(default=None, alias="downloadUrl")
     error: str | None = None
+    logs: list[AgentTaskLog] = Field(default_factory=list)
     created_at: str = Field(alias="createdAt")
     updated_at: str = Field(alias="updatedAt")
 

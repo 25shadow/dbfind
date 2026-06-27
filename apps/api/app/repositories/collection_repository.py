@@ -1,5 +1,7 @@
 import sqlite3
+import json
 from pathlib import Path
+from typing import Any
 
 from app.core.config import get_settings
 
@@ -24,10 +26,8 @@ class CollectionRepository:
                 CREATE TABLE IF NOT EXISTS collections (
                     id TEXT PRIMARY KEY,
                     name TEXT NOT NULL,
-                    source_region TEXT,
-                    source_year INTEGER,
-                    source_type TEXT,
-                    source_scope TEXT,
+                    tags TEXT NOT NULL DEFAULT '[]',
+                    metadata TEXT NOT NULL DEFAULT '{}',
                     parent_id TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
@@ -35,16 +35,17 @@ class CollectionRepository:
                 """
             )
             self._ensure_column(conn, "parent_id", "TEXT")
+            self._ensure_column(conn, "tags", "TEXT NOT NULL DEFAULT '[]'")
+            self._ensure_column(conn, "metadata", "TEXT NOT NULL DEFAULT '{}'")
+            self._drop_legacy_source_columns(conn)
 
     def create_collection(
         self,
         *,
         collection_id: str,
         name: str,
-        source_region: str | None,
-        source_year: int | None,
-        source_type: str | None,
-        source_scope: str | None,
+        tags: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
         created_at: str,
         updated_at: str,
         parent_id: str | None = None,
@@ -53,18 +54,15 @@ class CollectionRepository:
             conn.execute(
                 """
                 INSERT INTO collections (
-                    id, name, source_region, source_year, source_type,
-                    source_scope, parent_id, created_at, updated_at
+                    id, name, tags, metadata, parent_id, created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     collection_id,
                     name,
-                    source_region,
-                    source_year,
-                    source_type,
-                    source_scope,
+                    self._dump_json(tags or []),
+                    self._dump_json(metadata or {}),
                     parent_id,
                     created_at,
                     updated_at,
@@ -76,20 +74,18 @@ class CollectionRepository:
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT id, name, source_region, source_year, source_type,
-                       source_scope, parent_id, created_at, updated_at
+                SELECT id, name, tags, metadata, parent_id, created_at, updated_at
                 FROM collections
                 ORDER BY created_at DESC
                 """
             ).fetchall()
-        return [dict(row) for row in rows]
+        return [self._decode_collection(row) for row in rows]
 
     def get_collection(self, collection_id: str) -> dict:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT id, name, source_region, source_year, source_type,
-                       source_scope, parent_id, created_at, updated_at
+                SELECT id, name, tags, metadata, parent_id, created_at, updated_at
                 FROM collections
                 WHERE id = ?
                 """,
@@ -99,17 +95,15 @@ class CollectionRepository:
         if row is None:
             raise FileNotFoundError(collection_id)
 
-        return dict(row)
+        return self._decode_collection(row)
 
     def update_collection(
         self,
         collection_id: str,
         *,
         name: str,
-        source_region: str | None,
-        source_year: int | None,
-        source_type: str | None,
-        source_scope: str | None,
+        tags: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
         updated_at: str,
         parent_id: str | None = None,
     ) -> dict:
@@ -118,20 +112,16 @@ class CollectionRepository:
                 """
                 UPDATE collections
                 SET name = ?,
-                    source_region = ?,
-                    source_year = ?,
-                    source_type = ?,
-                    source_scope = ?,
+                    tags = ?,
+                    metadata = ?,
                     parent_id = ?,
                     updated_at = ?
                 WHERE id = ?
                 """,
                 (
                     name,
-                    source_region,
-                    source_year,
-                    source_type,
-                    source_scope,
+                    self._dump_json(tags or []),
+                    self._dump_json(metadata or {}),
                     parent_id,
                     updated_at,
                     collection_id,
@@ -153,8 +143,7 @@ class CollectionRepository:
             if parent_id is None:
                 rows = conn.execute(
                     """
-                    SELECT id, name, source_region, source_year, source_type,
-                           source_scope, parent_id, created_at, updated_at
+                    SELECT id, name, tags, metadata, parent_id, created_at, updated_at
                     FROM collections
                     WHERE parent_id IS NULL
                     ORDER BY name ASC
@@ -163,15 +152,14 @@ class CollectionRepository:
             else:
                 rows = conn.execute(
                     """
-                    SELECT id, name, source_region, source_year, source_type,
-                           source_scope, parent_id, created_at, updated_at
+                    SELECT id, name, tags, metadata, parent_id, created_at, updated_at
                     FROM collections
                     WHERE parent_id = ?
                     ORDER BY name ASC
                     """,
                     (parent_id,),
                 ).fetchall()
-        return [dict(row) for row in rows]
+        return [self._decode_collection(row) for row in rows]
 
     def has_child_collections(self, collection_id: str) -> bool:
         with self._connect() as conn:
@@ -241,3 +229,67 @@ class CollectionRepository:
         }
         if name not in columns:
             conn.execute(f"ALTER TABLE collections ADD COLUMN {name} {definition}")
+
+    def _drop_legacy_source_columns(self, conn: sqlite3.Connection) -> None:
+        columns = [
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(collections)").fetchall()
+        ]
+        legacy_columns = {"source_region", "source_year", "source_type", "source_scope"}
+        if not legacy_columns.intersection(columns):
+            return
+
+        conn.execute(
+            """
+            CREATE TABLE collections_new (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                tags TEXT NOT NULL DEFAULT '[]',
+                metadata TEXT NOT NULL DEFAULT '{}',
+                parent_id TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO collections_new (id, name, tags, metadata, parent_id, created_at, updated_at)
+            SELECT
+                id,
+                name,
+                COALESCE(tags, '[]'),
+                COALESCE(metadata, '{}'),
+                parent_id,
+                created_at,
+                updated_at
+            FROM collections
+            """
+        )
+        conn.execute("DROP TABLE collections")
+        conn.execute("ALTER TABLE collections_new RENAME TO collections")
+
+    def _decode_collection(self, row: sqlite3.Row) -> dict:
+        item = dict(row)
+        item["tags"] = self._load_json_list(item.get("tags"))
+        item["metadata"] = self._load_json_object(item.get("metadata"))
+        return item
+
+    def _dump_json(self, value: Any) -> str:
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+    def _load_json_list(self, value: Any) -> list[str]:
+        try:
+            parsed = json.loads(value or "[]")
+        except json.JSONDecodeError:
+            return []
+        if not isinstance(parsed, list):
+            return []
+        return [str(item).strip() for item in parsed if str(item).strip()]
+
+    def _load_json_object(self, value: Any) -> dict[str, Any]:
+        try:
+            parsed = json.loads(value or "{}")
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}

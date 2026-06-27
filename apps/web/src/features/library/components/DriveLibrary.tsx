@@ -7,6 +7,7 @@ import {
   useBulkMove,
   useCollections,
   useCreateCollection,
+  useSuggestCollectionMetadata,
   useUpdateCollection
 } from "../../collections/hooks";
 import type { Collection } from "../../collections/types";
@@ -20,6 +21,7 @@ import {
   getStructurePreview,
   uploadSessionChunkWithProgress
 } from "../../files/api";
+import { ACCEPTED_DATA_FILE_TYPES } from "../../files/fileCapabilities";
 import { useFiles, useUploadSessions } from "../../files/hooks";
 import {
   getPersistedUploadFile,
@@ -75,6 +77,8 @@ export function DriveLibrary() {
   const queryClient = useQueryClient();
   const [dialog, setDialog] = useState<DialogState>();
   const [nameValue, setNameValue] = useState("");
+  const [tagsValue, setTagsValue] = useState("");
+  const [metadataValue, setMetadataValue] = useState("{}");
   const [moveTargetId, setMoveTargetId] = useState<string | undefined>();
   const [selectedFolderIds, setSelectedFolderIds] = useState<string[]>([]);
   const [selectedFileIds, setSelectedFileIds] = useState<string[]>([]);
@@ -106,6 +110,7 @@ export function DriveLibrary() {
   const uploadSessions = uploadSessionsData ?? EMPTY_UPLOAD_SESSIONS;
   const createMutation = useCreateCollection();
   const updateMutation = useUpdateCollection();
+  const suggestMetadataMutation = useSuggestCollectionMetadata();
   const bulkMoveMutation = useBulkMove();
   const bulkDeleteMutation = useMutation({
     mutationFn: async () => {
@@ -141,6 +146,8 @@ export function DriveLibrary() {
   const hasInitialLoadError = (isFoldersError || isFilesError) && !hasVisibleItems;
   const isSyncingLibrary = (isFetchingFolders || isFetchingFiles) && !isInitialLoading;
   const selectedCount = selectedFolderIds.length + selectedFileIds.length;
+  const parsedTags = useMemo(() => parseTags(tagsValue), [tagsValue]);
+  const parsedMetadata = useMemo(() => parseMetadata(metadataValue), [metadataValue]);
   const visibleFolderIds = useMemo(
     () => childCollections.map((collection) => collection.id),
     [childCollections]
@@ -308,14 +315,19 @@ export function DriveLibrary() {
 
   function createFolder() {
     const trimmed = nameValue.trim();
-    if (!trimmed) {
+    if (!trimmed || !parsedMetadata.isValid) {
       return;
     }
     createMutation.mutate(
-      { name: trimmed, parentId: currentCollectionId },
+      {
+        name: trimmed,
+        tags: parsedTags,
+        metadata: parsedMetadata.value,
+        parentId: currentCollectionId
+      },
       {
         onSuccess: () => {
-          setNameValue("");
+          resetCollectionForm();
           setDialog(undefined);
         }
       }
@@ -327,14 +339,20 @@ export function DriveLibrary() {
       return;
     }
     const trimmed = nameValue.trim();
-    if (!trimmed) {
+    if (!trimmed || !parsedMetadata.isValid) {
       return;
     }
     updateMutation.mutate(
-      { id: dialog.collection.id, name: trimmed, parentId: dialog.collection.parentId },
+      {
+        id: dialog.collection.id,
+        name: trimmed,
+        tags: parsedTags,
+        metadata: parsedMetadata.value,
+        parentId: dialog.collection.parentId
+      },
       {
         onSuccess: () => {
-          setNameValue("");
+          resetCollectionForm();
           setDialog(undefined);
         }
       }
@@ -345,6 +363,42 @@ export function DriveLibrary() {
     bulkDeleteMutation.mutate(undefined, {
       onSuccess: () => setDialog(undefined)
     });
+  }
+
+  function resetCollectionForm() {
+    setNameValue("");
+    setTagsValue("");
+    setMetadataValue("{}");
+    suggestMetadataMutation.reset();
+  }
+
+  function openNewFolderDialog() {
+    resetCollectionForm();
+    setDialog({ type: "new" });
+  }
+
+  function openRenameFolderDialog(collection: Collection) {
+    suggestMetadataMutation.reset();
+    setNameValue(collection.name);
+    setTagsValue((collection.tags || []).join(", "));
+    setMetadataValue(JSON.stringify(collection.metadata || {}, null, 2));
+    setDialog({ type: "rename", collection });
+  }
+
+  function suggestMetadata() {
+    const trimmed = nameValue.trim();
+    if (!trimmed || suggestMetadataMutation.isPending) {
+      return;
+    }
+    suggestMetadataMutation.mutate(
+      { name: trimmed },
+      {
+        onSuccess: (suggestion) => {
+          setTagsValue(suggestion.tags.join(", "));
+          setMetadataValue(JSON.stringify(suggestion.metadata, null, 2));
+        }
+      }
+    );
   }
 
   function moveSelected() {
@@ -403,7 +457,7 @@ export function DriveLibrary() {
         ref={inputRef}
         type="file"
         multiple
-        accept=".xlsx,.xls,.xlsm,.xlsb,.et,.ods,.csv"
+        accept={ACCEPTED_DATA_FILE_TYPES}
         className="hidden-input"
         onChange={handleFileChange}
       />
@@ -467,7 +521,7 @@ export function DriveLibrary() {
             title="新建文件夹"
             onClick={() => {
               setNameValue("");
-              setDialog({ type: "new" });
+              openNewFolderDialog();
             }}
           >
             ＋ 文件夹
@@ -486,8 +540,7 @@ export function DriveLibrary() {
             onClick={() => {
               const collection = childCollections.find((item) => item.id === selectedFolderIds[0]);
               if (collection) {
-                setNameValue(collection.name);
-                setDialog({ type: "rename", collection });
+                openRenameFolderDialog(collection);
               }
             }}
           >
@@ -623,10 +676,13 @@ export function DriveLibrary() {
       {dialog?.type === "new" && (
         <AppDialog
           title="新建资料文件夹"
-          description="文件夹名会作为这批资料的默认来源上下文。"
+          description="标签和元数据会作为显式来源上下文。"
           confirmLabel="新建文件夹"
-          isConfirmDisabled={!nameValue.trim() || createMutation.isPending}
-          onCancel={() => setDialog(undefined)}
+          isConfirmDisabled={!nameValue.trim() || !parsedMetadata.isValid || createMutation.isPending}
+          onCancel={() => {
+            resetCollectionForm();
+            setDialog(undefined);
+          }}
           onConfirm={createFolder}
         >
           <label className="dialog-field">
@@ -634,10 +690,36 @@ export function DriveLibrary() {
             <input
               value={nameValue}
               autoFocus
-              placeholder="例如 广东省2022年农村统计年鉴"
+              placeholder="资料文件夹名称"
               onChange={(event) => setNameValue(event.target.value)}
             />
           </label>
+          <label className="dialog-field">
+            <span>标签</span>
+            <input
+              value={tagsValue}
+              placeholder="逗号分隔"
+              onChange={(event) => setTagsValue(event.target.value)}
+            />
+          </label>
+          <button
+            type="button"
+            className="dialog-secondary-button"
+            disabled={!nameValue.trim() || suggestMetadataMutation.isPending}
+            onClick={suggestMetadata}
+          >
+            {suggestMetadataMutation.isPending ? "识别中..." : "AI 识别标签和元数据"}
+          </button>
+          <label className="dialog-field">
+            <span>元数据 JSON</span>
+            <textarea
+              value={metadataValue}
+              spellCheck={false}
+              onChange={(event) => setMetadataValue(event.target.value)}
+            />
+          </label>
+          {suggestMetadataMutation.isError && <div className="dialog-error">AI 识别失败，请检查模型配置。</div>}
+          {!parsedMetadata.isValid && <div className="dialog-error">元数据必须是 JSON 对象</div>}
         </AppDialog>
       )}
 
@@ -645,8 +727,11 @@ export function DriveLibrary() {
         <AppDialog
           title="重命名资料文件夹"
           confirmLabel="保存名称"
-          isConfirmDisabled={!nameValue.trim() || updateMutation.isPending}
-          onCancel={() => setDialog(undefined)}
+          isConfirmDisabled={!nameValue.trim() || !parsedMetadata.isValid || updateMutation.isPending}
+          onCancel={() => {
+            resetCollectionForm();
+            setDialog(undefined);
+          }}
           onConfirm={renameFolder}
         >
           <label className="dialog-field">
@@ -657,6 +742,32 @@ export function DriveLibrary() {
               onChange={(event) => setNameValue(event.target.value)}
             />
           </label>
+          <label className="dialog-field">
+            <span>标签</span>
+            <input
+              value={tagsValue}
+              placeholder="逗号分隔"
+              onChange={(event) => setTagsValue(event.target.value)}
+            />
+          </label>
+          <button
+            type="button"
+            className="dialog-secondary-button"
+            disabled={!nameValue.trim() || suggestMetadataMutation.isPending}
+            onClick={suggestMetadata}
+          >
+            {suggestMetadataMutation.isPending ? "识别中..." : "AI 识别标签和元数据"}
+          </button>
+          <label className="dialog-field">
+            <span>元数据 JSON</span>
+            <textarea
+              value={metadataValue}
+              spellCheck={false}
+              onChange={(event) => setMetadataValue(event.target.value)}
+            />
+          </label>
+          {suggestMetadataMutation.isError && <div className="dialog-error">AI 识别失败，请检查模型配置。</div>}
+          {!parsedMetadata.isValid && <div className="dialog-error">元数据必须是 JSON 对象</div>}
         </AppDialog>
       )}
 
@@ -1456,6 +1567,43 @@ function fileStatusLabel(status: DataFile["status"]) {
     failed: "failed"
   };
   return labels[status];
+}
+
+function parseTags(value: string) {
+  const seen = new Set<string>();
+  const tags: string[] = [];
+  for (const part of value.split(",")) {
+    const tag = part.trim();
+    if (!tag || seen.has(tag)) {
+      continue;
+    }
+    tags.push(tag);
+    seen.add(tag);
+  }
+  return tags;
+}
+
+function parseMetadata(value: string): { isValid: boolean; value: Record<string, string> } {
+  const text = value.trim();
+  if (!text) {
+    return { isValid: true, value: {} };
+  }
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") {
+      return { isValid: false, value: {} };
+    }
+    const metadata: Record<string, string> = {};
+    for (const [key, rawValue] of Object.entries(parsed)) {
+      if (rawValue === null || Array.isArray(rawValue) || typeof rawValue === "object") {
+        continue;
+      }
+      metadata[key] = String(rawValue);
+    }
+    return { isValid: true, value: metadata };
+  } catch {
+    return { isValid: false, value: {} };
+  }
 }
 
 function buildBreadcrumb(currentCollectionId: string | undefined, collections: Collection[]) {

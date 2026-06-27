@@ -2,6 +2,7 @@ import pytest
 
 from app.services.agent_service import AgentService
 from app.schemas.agent import AgentPlan, AgentPreview, AgentStep
+from app.services.agent_router import AgentRoute
 
 
 class FakePlanner:
@@ -49,6 +50,14 @@ class EmptyPlanner:
         schema_context: str = "",
     ) -> AgentPlan | None:
         return None
+
+
+class StaticRouter:
+    def __init__(self, kind: str) -> None:
+        self.kind = kind
+
+    def route(self, instruction: str) -> AgentRoute:
+        return AgentRoute(kind=self.kind)
 
 
 class FakeSchemaService:
@@ -159,7 +168,11 @@ class InvalidOperationsStringPlanner:
 
 @pytest.mark.anyio
 async def test_agent_plan_for_table_operation_requires_confirmation(temp_workspace):
-    service = AgentService(planner=FakePlanner(), schema_service=FakeSchemaService())
+    service = AgentService(
+        planner=FakePlanner(),
+        schema_service=FakeSchemaService(),
+        router=StaticRouter("operation_planning"),
+    )
 
     plan = await service.plan(
         instruction="整理当前表格，清洗空值并生成一个适合汇报的新工作簿",
@@ -177,7 +190,11 @@ async def test_agent_plan_for_table_operation_requires_confirmation(temp_workspa
 @pytest.mark.anyio
 async def test_agent_service_fast_plans_common_workbook_generation(temp_workspace):
     planner = FakePlanner()
-    service = AgentService(planner=planner, schema_service=FakeSchemaService())
+    service = AgentService(
+        planner=planner,
+        schema_service=FakeSchemaService(),
+        router=StaticRouter("report_generation"),
+    )
 
     plan = await service.plan(
         instruction="把广东省广州市街道数量和韶关街道数量做一个对比并生成表格",
@@ -193,9 +210,62 @@ async def test_agent_service_fast_plans_common_workbook_generation(temp_workspac
 
 
 @pytest.mark.anyio
+async def test_agent_service_fast_plans_general_report_generation(temp_workspace):
+    planner = FakePlanner()
+    service = AgentService(
+        planner=planner,
+        schema_service=FakeSchemaService(),
+        router=StaticRouter("report_generation"),
+    )
+
+    examples = [
+        "仁化县2022-2024年年末实有耕地面积水田分别是多少，增长了多少，占全市比重多少，生成一张表格给我",
+        "生成仁化县水田面积表格",
+        "导出销售额报表",
+        "生成一张2024年各市水田面积占比表",
+    ]
+
+    for instruction in examples:
+        plan = await service.plan(
+            instruction=instruction,
+            scope="all",
+            file_id=None,
+        )
+
+        assert plan.intent == "excel_operation"
+        assert plan.requires_confirmation is True
+        assert [step.tool for step in plan.steps] == ["query", "workbook_writer", "workbook_style"]
+        assert instruction in plan.steps[0].params
+
+    assert planner.calls == []
+
+
+@pytest.mark.anyio
+async def test_agent_service_derives_report_sheet_name_from_instruction(temp_workspace):
+    service = AgentService(
+        planner=FakePlanner(),
+        schema_service=FakeSchemaService(),
+        router=StaticRouter("report_generation"),
+    )
+
+    plan = await service.plan(
+        instruction="生成一张2024年各市水田面积占比表",
+        scope="all",
+        file_id=None,
+    )
+
+    assert '"sheetName": "2024年各市水田面积占比表"' in plan.steps[0].params
+    assert '"sheetName": "2024年各市水田面积占比表"' in plan.steps[1].params
+
+
+@pytest.mark.anyio
 async def test_agent_service_fast_plans_selected_comparison_workbook_generation(temp_workspace):
     planner = FakePlanner()
-    service = AgentService(planner=planner, schema_service=FakeSchemaService())
+    service = AgentService(
+        planner=planner,
+        schema_service=FakeSchemaService(),
+        router=StaticRouter("report_generation"),
+    )
 
     plan = await service.plan(
         instruction="把广东省广州街道数量和韶关街道数量做一个对比并且生成表格，并做一个减法，看他们的街道数量差距多少",
@@ -235,7 +305,11 @@ async def test_agent_plan_for_query_uses_query_tool_without_write_confirmation(t
                 preview=AgentPreview(),
             )
 
-    service = AgentService(planner=QueryPlanner(), schema_service=FakeSchemaService())
+    service = AgentService(
+        planner=QueryPlanner(),
+        schema_service=FakeSchemaService(),
+        router=StaticRouter("query_only"),
+    )
 
     plan = await service.plan(
         instruction="查询全部文件中销售额最高的记录",
@@ -252,7 +326,11 @@ async def test_agent_plan_for_query_uses_query_tool_without_write_confirmation(t
 
 @pytest.mark.anyio
 async def test_agent_plan_rejects_selected_scope_without_file(temp_workspace):
-    service = AgentService(planner=FakePlanner(), schema_service=FakeSchemaService())
+    service = AgentService(
+        planner=FakePlanner(),
+        schema_service=FakeSchemaService(),
+        router=StaticRouter("operation_planning"),
+    )
 
     with pytest.raises(ValueError, match="请选择一个已导入的文件"):
         await service.plan(
@@ -264,21 +342,29 @@ async def test_agent_plan_rejects_selected_scope_without_file(temp_workspace):
 
 @pytest.mark.anyio
 async def test_agent_service_uses_injected_sdk_planner_result(temp_workspace):
-    service = AgentService(planner=FakePlanner(), schema_service=FakeSchemaService())
+    service = AgentService(
+        planner=FakePlanner(),
+        schema_service=FakeSchemaService(),
+        router=StaticRouter("operation_planning"),
+    )
 
     plan = await service.plan(
-        instruction="生成一个格式化工作簿",
+        instruction="修改当前工作簿格式",
         scope="selected",
         file_id="file-1",
     )
 
-    assert plan.summary == "SDK planned: 生成一个格式化工作簿"
+    assert plan.summary == "SDK planned: 修改当前工作簿格式"
     assert [step.tool for step in plan.steps] == ["workbook_writer"]
 
 
 @pytest.mark.anyio
 async def test_agent_service_requires_openai_agents_sdk_plan(temp_workspace):
-    service = AgentService(planner=EmptyPlanner(), schema_service=FakeSchemaService())
+    service = AgentService(
+        planner=EmptyPlanner(),
+        schema_service=FakeSchemaService(),
+        router=StaticRouter("operation_planning"),
+    )
 
     with pytest.raises(RuntimeError, match="OpenAI Agents SDK"):
         await service.plan(
@@ -291,10 +377,14 @@ async def test_agent_service_requires_openai_agents_sdk_plan(temp_workspace):
 @pytest.mark.anyio
 async def test_agent_service_passes_selected_file_schema_context(temp_workspace):
     planner = FakePlanner()
-    service = AgentService(planner=planner, schema_service=FakeSchemaService())
+    service = AgentService(
+        planner=planner,
+        schema_service=FakeSchemaService(),
+        router=StaticRouter("operation_planning"),
+    )
 
     await service.plan(
-        instruction="生成城市街道数量工作簿",
+        instruction="格式化城市街道数量工作簿",
         scope="selected",
         file_id="file-1",
     )
@@ -305,24 +395,32 @@ async def test_agent_service_passes_selected_file_schema_context(temp_workspace)
 @pytest.mark.anyio
 async def test_agent_service_passes_relevant_all_files_schema_context(temp_workspace):
     planner = FakePlanner()
-    service = AgentService(planner=planner, schema_service=FakeSchemaService())
+    service = AgentService(
+        planner=planner,
+        schema_service=FakeSchemaService(),
+        router=StaticRouter("operation_planning"),
+    )
 
     await service.plan(
-        instruction="生成城市街道数量工作簿",
+        instruction="格式化城市街道数量工作簿",
         scope="all",
         file_id=None,
     )
 
-    assert planner.calls[0]["schema_context"] == 'all-schema:生成城市街道数量工作簿: "城市" "街道数量"'
+    assert planner.calls[0]["schema_context"] == 'all-schema:格式化城市街道数量工作簿: "城市" "街道数量"'
 
 
 @pytest.mark.anyio
 async def test_agent_service_rejects_invalid_tool_params_before_task_creation(temp_workspace):
-    service = AgentService(planner=InvalidParamsPlanner(), schema_service=FakeSchemaService())
+    service = AgentService(
+        planner=InvalidParamsPlanner(),
+        schema_service=FakeSchemaService(),
+        router=StaticRouter("operation_planning"),
+    )
 
     with pytest.raises(RuntimeError, match="query.params"):
         await service.plan(
-            instruction="生成城市汇总工作簿",
+            instruction="清洗城市汇总工作簿",
             scope="all",
             file_id=None,
         )
@@ -330,11 +428,15 @@ async def test_agent_service_rejects_invalid_tool_params_before_task_creation(te
 
 @pytest.mark.anyio
 async def test_agent_service_rejects_operations_string_params(temp_workspace):
-    service = AgentService(planner=InvalidOperationsStringPlanner(), schema_service=FakeSchemaService())
+    service = AgentService(
+        planner=InvalidOperationsStringPlanner(),
+        schema_service=FakeSchemaService(),
+        router=StaticRouter("operation_planning"),
+    )
 
     with pytest.raises(RuntimeError, match="operations"):
         await service.plan(
-            instruction="生成城市汇总工作簿",
+            instruction="清洗城市汇总工作簿",
             scope="all",
             file_id=None,
         )
@@ -342,11 +444,15 @@ async def test_agent_service_rejects_operations_string_params(temp_workspace):
 
 @pytest.mark.anyio
 async def test_agent_service_rejects_wrapped_workbook_style_params(temp_workspace):
-    service = AgentService(planner=InvalidStyleParamsPlanner(), schema_service=FakeSchemaService())
+    service = AgentService(
+        planner=InvalidStyleParamsPlanner(),
+        schema_service=FakeSchemaService(),
+        router=StaticRouter("operation_planning"),
+    )
 
     with pytest.raises(RuntimeError, match="workbook_style.params"):
         await service.plan(
-            instruction="生成城市汇总工作簿",
+            instruction="清洗城市汇总工作簿",
             scope="all",
             file_id=None,
         )

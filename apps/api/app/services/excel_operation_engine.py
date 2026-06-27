@@ -8,13 +8,25 @@ import pandas as pd
 
 
 @dataclass(frozen=True)
-class WorkbookDesign:
+class WorkbookDesignDefaults:
     freeze_header: bool = True
     autofilter: bool = True
     header_fill: str = "E8F1FF"
-    number_formats: dict[str, str] = field(default_factory=dict)
     as_table: bool = False
     table_style: str = "Table Style Medium 2"
+
+
+WORKBOOK_DESIGN_DEFAULTS = WorkbookDesignDefaults()
+
+
+@dataclass(frozen=True)
+class WorkbookDesign:
+    freeze_header: bool = WORKBOOK_DESIGN_DEFAULTS.freeze_header
+    autofilter: bool = WORKBOOK_DESIGN_DEFAULTS.autofilter
+    header_fill: str = WORKBOOK_DESIGN_DEFAULTS.header_fill
+    number_formats: dict[str, str] = field(default_factory=dict)
+    as_table: bool = WORKBOOK_DESIGN_DEFAULTS.as_table
+    table_style: str = WORKBOOK_DESIGN_DEFAULTS.table_style
     conditional_formats: list[dict[str, Any]] = field(default_factory=list)
     charts: list[dict[str, Any]] = field(default_factory=list)
 

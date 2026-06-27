@@ -45,10 +45,6 @@ def test_bulk_upload_accepts_collection_id_on_single_endpoint(
         collection_id="collection_1",
         name="资料文件夹",
         parent_id=None,
-        source_region=None,
-        source_year=None,
-        source_type=None,
-        source_scope=None,
         created_at="2026-06-13T00:00:00+00:00",
         updated_at="2026-06-13T00:00:00+00:00",
     )

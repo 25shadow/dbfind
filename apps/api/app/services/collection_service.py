@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 from uuid import uuid4
 
 from fastapi import HTTPException
@@ -8,26 +9,27 @@ from fastapi import HTTPException
 from app.repositories.collection_repository import CollectionRepository
 from app.repositories.file_repository import FileRepository
 from app.schemas.collections import CollectionResponse
-from app.services.collection_name_parser import CollectionNameParser
 
 
 class CollectionService:
     def __init__(self) -> None:
         self.repository = CollectionRepository()
         self.file_repository = FileRepository()
-        self.parser = CollectionNameParser()
 
-    def create(self, name: str, parent_id: str | None = None) -> CollectionResponse:
+    def create(
+        self,
+        name: str,
+        parent_id: str | None = None,
+        tags: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> CollectionResponse:
         self._ensure_parent_exists(parent_id)
-        parsed = self.parser.parse(name)
         now = datetime.now(UTC).isoformat()
         collection = self.repository.create_collection(
             collection_id=uuid4().hex,
             name=name.strip(),
-            source_region=parsed.source_region,
-            source_year=parsed.source_year,
-            source_type=parsed.source_type,
-            source_scope=parsed.source_scope,
+            tags=self._normalize_tags(tags),
+            metadata=self._normalize_metadata(metadata),
             parent_id=parent_id,
             created_at=now,
             updated_at=now,
@@ -52,6 +54,8 @@ class CollectionService:
         collection_id: str,
         name: str,
         parent_id: str | None = None,
+        tags: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> CollectionResponse:
         self._ensure_parent_exists(parent_id)
         if parent_id == collection_id:
@@ -59,15 +63,12 @@ class CollectionService:
         if parent_id and self._is_descendant(parent_id, collection_id):
             raise HTTPException(status_code=400, detail="不能移动到自己的子文件夹")
 
-        parsed = self.parser.parse(name)
         try:
             collection = self.repository.update_collection(
                 collection_id,
                 name=name.strip(),
-                source_region=parsed.source_region,
-                source_year=parsed.source_year,
-                source_type=parsed.source_type,
-                source_scope=parsed.source_scope,
+                tags=self._normalize_tags(tags),
+                metadata=self._normalize_metadata(metadata),
                 parent_id=parent_id,
                 updated_at=datetime.now(UTC).isoformat(),
             )
@@ -137,3 +138,25 @@ class CollectionService:
                 return True
             current_id = current.get("parent_id")
         return False
+
+    def _normalize_tags(self, tags: list[str] | None) -> list[str]:
+        normalized = []
+        seen = set()
+        for tag in tags or []:
+            value = str(tag).strip()
+            if not value or value in seen:
+                continue
+            normalized.append(value)
+            seen.add(value)
+        return normalized[:20]
+
+    def _normalize_metadata(self, metadata: dict[str, Any] | None) -> dict[str, str]:
+        normalized: dict[str, str] = {}
+        for key, value in (metadata or {}).items():
+            clean_key = str(key).strip()
+            if not clean_key or isinstance(value, (dict, list)):
+                continue
+            clean_value = str(value).strip()
+            if clean_value:
+                normalized[clean_key] = clean_value
+        return dict(list(normalized.items())[:50])

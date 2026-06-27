@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException
+from fastapi.concurrency import run_in_threadpool
 from starlette.status import HTTP_204_NO_CONTENT
 
 from app.schemas.query import QueryRequest, QueryResponse
@@ -11,7 +12,7 @@ router = APIRouter()
 @router.post("", response_model=QueryResponse)
 async def create_query(payload: QueryRequest) -> QueryResponse:
     try:
-        return QueryService().run(payload)
+        return await run_in_threadpool(QueryService().run, payload)
     except AiResponseError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     except ValueError as exc:
@@ -20,13 +21,13 @@ async def create_query(payload: QueryRequest) -> QueryResponse:
 
 @router.get("/history", response_model=list[QueryResponse])
 async def list_query_history(keyword: str | None = None) -> list[QueryResponse]:
-    return QueryService().list_history(keyword)
+    return await run_in_threadpool(QueryService().list_history, keyword)
 
 
 @router.get("/{query_id}", response_model=QueryResponse)
 async def get_query(query_id: str) -> QueryResponse:
     try:
-        return QueryService().get(query_id)
+        return await run_in_threadpool(QueryService().get, query_id)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="查询不存在") from exc
 
@@ -34,6 +35,6 @@ async def get_query(query_id: str) -> QueryResponse:
 @router.delete("/{query_id}", status_code=HTTP_204_NO_CONTENT)
 async def delete_query(query_id: str) -> None:
     try:
-        QueryService().delete(query_id)
+        await run_in_threadpool(QueryService().delete, query_id)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="查询不存在") from exc

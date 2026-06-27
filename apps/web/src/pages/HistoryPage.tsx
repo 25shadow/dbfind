@@ -405,11 +405,6 @@ function QueryHistoryDetail({
                 onClick={() => navigateToSource(source)}
               >
                 <strong>{source.collectionName || source.fileName}</strong>
-                <span>
-                  {source.sourceRegion && `${source.sourceRegion} / `}
-                  {source.sourceYear && `${source.sourceYear} / `}
-                  {source.sourceType || "未识别资料类型"}
-                </span>
                 <small>
                   {source.fileName} / {source.sheetTitle || source.sheetName}
                 </small>
@@ -561,7 +556,13 @@ function AgentHistoryDetail({
       ) : (
         <section className="agent-generated-panel is-pending">
           <h3>生成结果</h3>
-          <p>{task.status === "failed" ? "任务失败，未生成工作簿。" : "任务尚未生成可下载文件。"}</p>
+          <p>
+            {task.status === "failed"
+              ? "任务失败，未生成工作簿。"
+              : task.status === "needs_revision"
+              ? "任务需要调整，预览成功后才能生成工作簿。"
+              : "任务尚未生成可下载文件。"}
+          </p>
         </section>
       )}
 
@@ -579,6 +580,23 @@ function AgentHistoryDetail({
           ))}
         </ol>
       </section>
+
+      {task.logs && task.logs.length > 0 && (
+        <section className="agent-history-plan">
+          <h3>运行过程</h3>
+          <ol className="agent-history-log-list">
+            {task.logs.map((log, index) => (
+              <li key={`${task.id}-${log.stage}-${index}`} className={`is-${log.status}`}>
+                <span>{stageLabel(log.stage)}</span>
+                <div>
+                  <strong>{log.message}</strong>
+                  <small>{formatDate(log.timestamp)}</small>
+                </div>
+              </li>
+            ))}
+          </ol>
+        </section>
+      )}
     </article>
   );
 }
@@ -599,6 +617,7 @@ function scopeLabel(scope: string) {
 function taskStatusLabel(status: string) {
   const labels: Record<string, string> = {
     needs_confirmation: "等待确认",
+    needs_revision: "需调整",
     completed: "已完成",
     failed: "失败",
     running: "执行中",
@@ -624,6 +643,16 @@ function toolLabel(tool: string) {
     workbook_style: "设计表格"
   };
   return labels[tool] || tool;
+}
+
+function stageLabel(stage: string) {
+  const labels: Record<string, string> = {
+    plan: "规划",
+    query: "查询",
+    preview: "预览",
+    execute: "执行"
+  };
+  return labels[stage] || stage;
 }
 
 function deleteHistoryEntryByApi(entry: HistoryEntry) {
