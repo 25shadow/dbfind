@@ -82,7 +82,6 @@ export function QueryPanel() {
       <header className="query-panel-header">
         <div>
           <h2>Excel Agent</h2>
-          <p>理解你的 Excel 任务，先规划可审阅步骤，再调用查询或操作工具。</p>
         </div>
         <span className={`query-status-pill ${isRunning ? "is-running" : ""}`}>
           {isRunning ? "处理中" : "就绪"}
@@ -118,11 +117,6 @@ export function QueryPanel() {
           onChange={setQuestion}
           onSubmit={submitQuery}
         />
-        <div className="query-context-line">
-          {scope === "selected" && !selectedFileId && "请先选择一个已导入的文件，或切换到全部文件查询。"}
-          {scope === "selected" && selectedFileId && "Agent 将只读取当前选中文件，并在写入前要求确认。"}
-          {scope === "all" && "Agent 将读取所有已导入并可用的文件；写入类任务会生成新文件。"}
-        </div>
       </div>
 
       {(agentPlanMutation.isError || queryMutation.isError || executeAgentMutation.isError) && (
@@ -223,7 +217,6 @@ function AgentPlanPreview({
         <div>
           <span className="result-kicker">Agent 计划</span>
           <h3>{isQuery ? "查询工具" : "Excel 操作计划"}</h3>
-          <p>{plan.summary}</p>
           {taskId && <small>任务 {taskId.slice(0, 8)}</small>}
         </div>
         <div className="agent-plan-header-actions">
@@ -246,31 +239,6 @@ function AgentPlanPreview({
           )}
         </div>
       </summary>
-
-      {plan.requiresConfirmation && (
-        <div className={`agent-next-action ${canExecute ? "is-ready" : ""} ${hasExecuted ? "is-completed" : ""}`}>
-          <div>
-            <strong>
-              {hasExecuted
-                ? "Excel 已生成"
-                : canExecute
-                ? "可以生成文件"
-                : previewError
-                ? "需要调整后再生成"
-                : "正在准备确认"}
-            </strong>
-            <span>
-              {hasExecuted
-                ? "新的 Excel 工作簿已生成，可以直接下载。"
-                : previewError
-                ? "预览失败，当前计划不能执行。"
-                : canExecute
-                ? "已完成预览，点击确认会生成新的 Excel 工作簿。"
-                : "系统会先生成预览，预览成功后确认按钮会自动可用。"}
-            </span>
-          </div>
-        </div>
-      )}
 
       <ol className="agent-step-list">
         {plan.steps.map((step, index) => (
@@ -299,13 +267,6 @@ function AgentPlanPreview({
           <strong>
             {hasExecuted ? "已生成文件" : canExecute ? "等待确认" : previewError ? "预览失败" : "等待预览"}
           </strong>
-          <span>
-            {hasExecuted
-              ? "已生成新的 Excel 工作簿，原始文件未被覆盖。"
-              : previewError
-              ? "请调整任务描述或数据范围，预览成功后才能生成工作簿。"
-              : "确认后会生成新的 Excel 工作簿，不覆盖原始文件。"}
-          </span>
           <div className="agent-confirm-actions">
             {executeResult && (
               <a href={executeResult.downloadUrl} target="_blank" rel="noreferrer">
@@ -321,7 +282,7 @@ function AgentPlanPreview({
 
 function AgentRunLogPanel({ logs }: { logs: AgentTaskLog[] }) {
   return (
-    <details className="agent-run-log">
+    <details className="agent-run-log" open>
       <summary>运行过程</summary>
       <ol>
         {logs.map((log, index) => (
@@ -459,11 +420,11 @@ function buildCurrentRunLogs({
   const now = new Date().toISOString();
   const logs: AgentTaskLog[] = [];
   if (isPlanning) {
-    logs.push({ timestamp: now, stage: "plan", status: "running", message: "正在分析任务并生成计划" });
+    logs.push({ timestamp: now, stage: "plan", status: "running", message: "正在规划任务" });
     return logs;
   }
   if (hasPlan) {
-    logs.push({ timestamp: now, stage: "plan", status: "completed", message: "已生成可审阅计划" });
+    logs.push({ timestamp: now, stage: "plan", status: "completed", message: "规划完成" });
   }
   if (isQueryRunning) {
     logs.push({ timestamp: now, stage: "query", status: "running", message: "正在查询数据" });
@@ -471,14 +432,16 @@ function buildCurrentRunLogs({
     logs.push({ timestamp: now, stage: "query", status: "completed", message: "查询完成" });
   }
   if (isPreviewing) {
-    logs.push({ timestamp: now, stage: "preview", status: "running", message: "正在生成操作预览" });
+    logs.push({ timestamp: now, stage: "query", status: "running", message: "正在查询数据" });
+    logs.push({ timestamp: now, stage: "preview", status: "running", message: "正在生成工作簿预览" });
   } else if (previewError) {
     logs.push({ timestamp: now, stage: "preview", status: "failed", message: previewError });
   } else if (hasPreview) {
-    logs.push({ timestamp: now, stage: "preview", status: "completed", message: "操作预览已生成" });
+    logs.push({ timestamp: now, stage: "query", status: "completed", message: "查询完成" });
+    logs.push({ timestamp: now, stage: "preview", status: "completed", message: "工作簿预览已生成" });
   }
   if (isExecuting) {
-    logs.push({ timestamp: now, stage: "execute", status: "running", message: "正在执行并生成工作簿" });
+    logs.push({ timestamp: now, stage: "execute", status: "running", message: "正在生成工作簿" });
   } else if (executeError) {
     logs.push({ timestamp: now, stage: "execute", status: "failed", message: executeError });
   } else if (hasExecuteResult) {
