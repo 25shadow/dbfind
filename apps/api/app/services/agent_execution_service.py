@@ -65,7 +65,7 @@ class AgentExecutionService:
 
     def preview(self, *, plan: AgentPlan, file_id: str | None) -> AgentOperationPreview:
         self._validate_plan(plan)
-        frames = self._frames_for_plan(plan, file_id)
+        frames, sources = self._frames_and_sources_for_plan(plan, file_id)
         if not frames:
             raise ValueError("没有可预览的数据表")
 
@@ -89,6 +89,7 @@ class AgentExecutionService:
             affectedRows=affected_rows,
             affectedColumns=affected_columns,
             sheets=sheets,
+            sources=sources,
             design={
                 "freezeHeader": design.freeze_header,
                 "autofilter": design.autofilter,
@@ -101,9 +102,17 @@ class AgentExecutionService:
         )
 
     def _frames_for_plan(self, plan: AgentPlan, file_id: str | None) -> list[tuple[str, pd.DataFrame]]:
-        query_frames = self._frames_from_query_steps(plan, file_id)
+        frames, _sources = self._frames_and_sources_for_plan(plan, file_id)
+        return frames
+
+    def _frames_and_sources_for_plan(
+        self,
+        plan: AgentPlan,
+        file_id: str | None,
+    ) -> tuple[list[tuple[str, pd.DataFrame]], list[dict]]:
+        query_frames, query_sources = self._frames_from_query_steps(plan, file_id)
         if query_frames:
-            return query_frames
+            return query_frames, query_sources
 
         if plan.scope != "selected":
             raise ValueError("全部文件写入任务需要先通过 query 步骤生成结果表")
@@ -114,14 +123,15 @@ class AgentExecutionService:
         if data_file["status"] != "ready":
             raise ValueError("文件尚未完成导入，不能执行 Agent 操作")
 
-        return self._frames_for_file(file_id)
+        return self._frames_for_file(file_id), []
 
     def _frames_from_query_steps(
         self,
         plan: AgentPlan,
         file_id: str | None,
-    ) -> list[tuple[str, pd.DataFrame]]:
+    ) -> tuple[list[tuple[str, pd.DataFrame]], list[dict]]:
         frames = []
+        sources: list[dict] = []
         for index, step in enumerate(plan.steps, start=1):
             if step.tool != "query":
                 continue
@@ -142,9 +152,10 @@ class AgentExecutionService:
             )
             dataframe = pd.DataFrame(response.rows, columns=response.columns)
             dataframe = self._append_source_context(dataframe, response.sources)
+            sources.extend(response.sources)
             sheet_name = params.get("sheetName") or params.get("sheet_name") or f"查询结果{index}"
             frames.append((self.workbook_engine.safe_sheet_name(str(sheet_name)), dataframe))
-        return frames
+        return frames, self._dedupe_sources(sources)
 
     def _append_source_context(self, dataframe: pd.DataFrame, sources: list[dict]) -> pd.DataFrame:
         if dataframe.empty or not sources:
@@ -176,6 +187,21 @@ class AgentExecutionService:
             if value is not None and str(value).strip()
         ]
         return " / ".join(parts)
+
+    def _dedupe_sources(self, sources: list[dict]) -> list[dict]:
+        unique_sources = []
+        seen = set()
+        for source in sources:
+            key = (
+                source.get("fileId") or source.get("file_id"),
+                source.get("sheetId") or source.get("sheet_id"),
+                source.get("tableName") or source.get("table_name"),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            unique_sources.append(source)
+        return unique_sources
 
     def _unique_column_name(self, dataframe: pd.DataFrame, base_name: str) -> str:
         if base_name not in dataframe.columns:

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { QueryInput } from "./QueryInput";
-import { QueryResultTable } from "./QueryResultTable";
+import { QueryResultTable, SourceSummary } from "./QueryResultTable";
 import { SqlPreview } from "./SqlPreview";
 import {
   useCreateAgentPlan,
@@ -27,6 +27,7 @@ export function QueryPanel() {
   const isQueryDisabled = isRunning || (scope === "selected" && !selectedFileId);
   const plan = agentPlanMutation.data?.plan;
   const taskId = agentPlanMutation.data?.taskId || undefined;
+  const shouldShowQueryResult = Boolean(queryMutation.data) || !plan || plan.intent === "query";
   const runLogs = buildCurrentRunLogs({
     isPlanning: agentPlanMutation.isPending,
     hasPlan: Boolean(plan),
@@ -161,7 +162,7 @@ export function QueryPanel() {
           }}
         />
       )}
-      <QueryResultTable result={queryMutation.data} />
+      {shouldShowQueryResult && <QueryResultTable result={queryMutation.data} />}
       <SqlPreview sql={queryMutation.data?.sql} />
     </section>
   );
@@ -240,18 +241,6 @@ function AgentPlanPreview({
         </div>
       </summary>
 
-      <ol className="agent-step-list">
-        {plan.steps.map((step, index) => (
-          <li key={`${step.tool}-${index}`}>
-            <span>{index + 1}</span>
-            <div>
-              <strong>{toolLabel(step.tool)}</strong>
-              <p>{step.purpose}</p>
-            </div>
-          </li>
-        ))}
-      </ol>
-
       <AgentRunLogPanel logs={logs} />
 
       {plan.requiresConfirmation && (
@@ -322,6 +311,7 @@ function AgentOperationPreviewPanel({
   }
 
   const firstSheet = preview.sheets[0];
+  const previewColumns = firstSheet?.columns.filter((column) => column !== "来源") || [];
   const designFlags = [
     preview.design.asTable ? "Excel Table" : null,
     preview.design.autofilter ? "筛选器" : null,
@@ -338,12 +328,13 @@ function AgentOperationPreviewPanel({
         <span>{preview.sheets.length} 个 Sheet</span>
       </div>
       {designFlags.length > 0 && <p className="agent-preview-design">{designFlags.join(" / ")}</p>}
+      <SourceSummary sources={preview.sources || []} />
       {firstSheet && (
         <div className="agent-preview-table-wrap">
           <table className="agent-preview-table">
             <thead>
               <tr>
-                {firstSheet.columns.map((column) => (
+                {previewColumns.map((column) => (
                   <th key={column}>{column}</th>
                 ))}
               </tr>
@@ -351,7 +342,7 @@ function AgentOperationPreviewPanel({
             <tbody>
               {firstSheet.rows.slice(0, 5).map((row, rowIndex) => (
                 <tr key={rowIndex}>
-                  {firstSheet.columns.map((column) => (
+                  {previewColumns.map((column) => (
                     <td key={column}>{formatCell(row[column])}</td>
                   ))}
                 </tr>
@@ -372,16 +363,6 @@ function formatCell(value: unknown) {
     return Number.isInteger(value) ? String(value) : value.toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
   }
   return String(value);
-}
-
-function toolLabel(tool: string) {
-  const labels: Record<string, string> = {
-    query: "查询数据",
-    dataframe_transform: "变换表格",
-    workbook_writer: "生成工作簿",
-    workbook_style: "设计表格"
-  };
-  return labels[tool] || tool;
 }
 
 function stageLabel(stage: string) {

@@ -87,6 +87,7 @@ class AgentOperationPreview(BaseModel):
     affected_rows: int = Field(alias="affectedRows")
     affected_columns: list[str] = Field(alias="affectedColumns")
     sheets: list[AgentPreviewSheet]
+    sources: list[dict] = Field(default_factory=list)
     design: dict = Field(default_factory=dict)
 
 

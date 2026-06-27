@@ -69,6 +69,7 @@ export type AgentOperationPreview = {
   affectedRows: number;
   affectedColumns: string[];
   sheets: AgentPreviewSheet[];
+  sources: QuerySource[];
   design: {
     freezeHeader?: boolean;
     autofilter?: boolean;

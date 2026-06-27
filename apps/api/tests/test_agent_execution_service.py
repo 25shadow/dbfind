@@ -279,14 +279,20 @@ def test_query_generated_workbook_includes_source_context(temp_workspace):
                 createdAt=datetime.now(UTC).isoformat(),
                 sources=[
                     {
+                        "collectionId": "collection-2024",
                         "collectionName": "2024年统计资料",
+                        "fileId": "file-2024",
                         "fileName": "农业产值.xlsx",
+                        "sheetId": "sheet-2024",
                         "sheetName": "Sheet1",
                         "sheetTitle": "季度农业产值",
                     },
                     {
+                        "collectionId": "collection-2026",
                         "collectionName": "2026年资料",
+                        "fileId": "file-2026",
                         "fileName": "补充数据.xlsx",
+                        "sheetId": "sheet-2026",
                         "sheetName": "Sheet2",
                     },
                 ],
@@ -317,6 +323,25 @@ def test_query_generated_workbook_includes_source_context(temp_workspace):
     assert preview.sheets[0].columns == ["地区", "产值_万元", "来源"]
     assert preview.sheets[0].rows[0]["来源"] == "2024年统计资料 / 农业产值.xlsx / 季度农业产值"
     assert preview.sheets[0].rows[1]["来源"] == "2026年资料 / 补充数据.xlsx / Sheet2"
+    assert preview.sources == [
+        {
+            "collectionId": "collection-2024",
+            "collectionName": "2024年统计资料",
+            "fileId": "file-2024",
+            "fileName": "农业产值.xlsx",
+            "sheetId": "sheet-2024",
+            "sheetName": "Sheet1",
+            "sheetTitle": "季度农业产值",
+        },
+        {
+            "collectionId": "collection-2026",
+            "collectionName": "2026年资料",
+            "fileId": "file-2026",
+            "fileName": "补充数据.xlsx",
+            "sheetId": "sheet-2026",
+            "sheetName": "Sheet2",
+        },
+    ]
 
     result = service.execute(plan=plan, file_id=None)
     workbook = load_workbook(temp_workspace / "generated" / result.output_id)

@@ -136,7 +136,7 @@ export function QueryResultTable({ result }: QueryResultTableProps) {
   );
 }
 
-function SourceSummary({ sources }: { sources: QuerySource[] }) {
+export function SourceSummary({ sources }: { sources: QuerySource[] }) {
   const setSelectedFileId = useFileSelection((state) => state.setSelectedFileId);
   const setSelectedSheetId = useSheetSelection((state) => state.setSelectedSheetId);
   const openCollection = useLibraryNavigation((state) => state.openCollection);
